@@ -1,0 +1,38 @@
+node_modules/
+dist/
+dist-server/
+*.local
+.DS_Store
+
+# Environment & secrets — never commit real values
+.env
+.env.*
+!.env.example
+.dev.vars
+.dev.vars.*
+*.pem
+*.key
+*.p12
+
+# Local runtime state (SQLite database, dev sessions, uploads)
+.data/
+.data-*/
+*.sqlite
+*.sqlite-journal
+*.sqlite-wal
+*.sqlite-shm
+*.db
+
+# Tooling caches
+.npm-cache/
+.vite/
+coverage/
+test-results/
+playwright-report/
+tests/e2e/artifacts/
+
+# DeepSpace CLI artefacts
+.deepspace/
+.wrangler/
+.wrangler-*/
+skills-lock.json.bak
