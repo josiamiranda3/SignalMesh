@@ -317,7 +317,59 @@ metadados marcados.
 
 ---
 
-## D18. O que **não** foi feito, deliberadamente
+## D19. `userBound` + `immutable` em toda coluna de posse (v0.2.1)
+
+**Contexto.** A auditoria da v0.2.1 encontrou a falha que o próprio SDK documenta: com
+`ownerField` e sem `userBound`, um membro cria uma linha com o `ownerId` de outra pessoa, e a
+linha passa a satisfazer `'own'` para essa pessoa. O lint do SDK apontava oito avisos.
+
+**Decisão.** `ownerId` é `userBound: true` e `immutable: true` nas oito collections de
+domínio.
+
+**Por que nas oito, e não só onde parecia necessário.** Todas declaram
+`member.create: true`, então todas eram exploráveis. A análise por collection está em
+[docs/audit-v0.2.1.md](audit-v0.2.1.md#2-problemas-corrigidos); nenhuma precisa que o
+servidor grave em nome de outro usuário no fluxo normal, exceto a migração — que foi
+ajustada para rodar *como* o dono, em vez de contornar a proteção.
+
+**Alternativa descartada.** Aplicar apenas nas collections "mais sensíveis". A base não
+sustenta essa distinção: qualquer collection com `create` aberto ao membro permite a mesma
+falsificação.
+
+**Efeito colateral aceito.** A migração passa a exigir `transportOwnerId === ownerId` e roda
+uma vez por conta. É menos conveniente e mais correto: a alternativa seria importar dados com
+o dono errado, silenciosamente.
+
+---
+
+## D20. Rota WebSocket explícita no Worker (v0.2.1)
+
+**Contexto.** O `worker.ts` da v0.2 só tratava `/api/*`. O `RecordScope` do SDK abre
+`GET /ws/<roomId>?token=<jwt>`, que caía no handler de assets e nunca conectava.
+
+**Decisão.** Implementar `/ws/*` no Worker: exige upgrade, verifica o token, falha fechado sem
+bindings de verificação, fixa o escopo em `app:<DEEPSPACE_APP_ID>` e delega via
+`authenticatedRoomRequest` (que remove headers de identidade do cliente antes do DO).
+
+**Por que não passou nos testes locais.** O bundle local não carrega app id, então
+`PlatformProviders` não monta os provedores e o caminho nunca é exercitado. É exatamente o
+tipo de omissão que só aparece no runtime real — e a razão pela qual a integração continua
+marcada como não validada.
+
+---
+
+## D21. `authorizedParties` como estreitamento, não como barreira
+
+**Decisão.** Passar `authorizedParties` (derivado de `APP_ORIGIN`/`AZP_ORIGINS`) ao
+`verifyJwt`, na API e no socket.
+
+**Limite reconhecido.** O SDK aceita token sem `azp`; a checagem só recusa quando a claim
+existe e não casa. Assinatura, emissor e expiração continuam sendo a barreira principal.
+Documentar isso evita a impressão de que a claim, sozinha, basta.
+
+---
+
+## D22. O que **não** foi feito, deliberadamente
 
 | Ausência | Motivo |
 | --- | --- |

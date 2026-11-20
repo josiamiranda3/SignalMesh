@@ -43,3 +43,6 @@ skills-lock.json.bak
 .wrangler/
 _ds-inspect/
 tests/worker/artifacts/
+
+# Artefatos de entrega (gerados a partir do git, nunca versionados)
+*.zip

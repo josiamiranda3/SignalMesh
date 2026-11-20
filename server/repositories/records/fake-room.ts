@@ -409,9 +409,17 @@ export class FakeRecordRoom {
       return { success: false, error: `Duplicate: record ${id} already exists in ${collection}` }
     }
 
+    // `userBound` columns are stamped from the caller's identity, NOT from the
+    // payload. This runs before validation, exactly as `putRecord` does, so a
+    // client-supplied value in such a column is simply overwritten.
+    const stamped: Record<string, unknown> = { ...data }
+    for (const column of schema.columns) {
+      if (column.userBound) stamped[column.name] = caller.userId ?? ''
+    }
+
     // Required + maxLength, as putRecord enforces on insert.
     for (const column of schema.columns) {
-      const value = data[column.name]
+      const value = stamped[column.name]
       if (column.required && (value === undefined || value === null || value === '')) {
         return { success: false, error: `Required field '${column.name}' is missing` }
       }
@@ -430,10 +438,10 @@ export class FakeRecordRoom {
     // Composite uniqueness.
     if (schema.uniqueOn?.length) {
       const conflict = this.selectAll(collection).some((row) =>
-        schema.uniqueOn!.every((field) => row.data[field] === data[field]),
+        schema.uniqueOn!.every((field) => row.data[field] === stamped[field]),
       )
       if (conflict) {
-        const fields = schema.uniqueOn.map((field) => `${field}=${data[field] ?? 'null'}`).join(', ')
+        const fields = schema.uniqueOn.map((field) => `${field}=${stamped[field] ?? 'null'}`).join(', ')
         return { success: false, error: `Duplicate: a record with ${fields} already exists in ${collection}` }
       }
     }
@@ -444,7 +452,7 @@ export class FakeRecordRoom {
       createdBy: caller.userId ?? 'anon',
       createdAt: now,
       updatedAt: now,
-      data,
+      data: stamped,
     })
 
     return { success: true, data: { recordId: id } }
@@ -466,6 +474,21 @@ export class FakeRecordRoom {
     }
 
     const merged = { ...row.data, ...patch }
+
+    // `immutable` refuses a *change*; sending the same value again is allowed.
+    for (const column of schema.columns) {
+      if (
+        column.immutable &&
+        patch[column.name] !== undefined &&
+        patch[column.name] !== row.data[column.name]
+      ) {
+        return { success: false, error: `Cannot modify immutable field '${column.name}'` }
+      }
+      // `userBound` silently restores the stored value on update.
+      if (column.userBound && patch[column.name] !== undefined) {
+        merged[column.name] = row.data[column.name]
+      }
+    }
 
     for (const column of schema.columns) {
       if (

@@ -47,12 +47,30 @@ export interface AuthResolverOptions {
   mode: AuthMode
   sessions: SessionStore
   users: UserRepository
-  /** `verifyJwt` from `deepspace/worker`, injected so tests can supply one. */
-  verifyJwt: (config: { publicKey: string; issuer: string }, token: string | null | undefined) => Promise<{ result: unknown }>
+  /**
+   * `verifyJwt` from `deepspace/worker`, injected so tests can supply one.
+   *
+   * The real implementation verifies the ES256 signature against the platform's
+   * public key and enforces `iss`, `exp`, `nbf` and an expected `scope` when the
+   * token carries one.
+   */
+  verifyJwt: (
+    config: { publicKey: string; issuer: string; authorizedParties?: string[] },
+    token: string | null | undefined,
+  ) => Promise<{ result: unknown }>
   /** Platform bindings carrying the verification key and issuer. */
   bindings: () => JwtVerifierBindings
   /** Resolve a user row from verified claims (DeepSpace provisioning). */
   ensureUser: (user: UserRecord) => Promise<UserRecord>
+  /**
+   * Origins a platform token may be bound to (`azp`).
+   *
+   * Empty means "do not constrain": signature, issuer and expiry are still
+   * verified, but a token minted for a different app would be accepted. Set this
+   * to the app's own origins so a token issued for another app is refused even
+   * though its signature is valid.
+   */
+  authorizedParties?: () => string[]
 }
 
 export class AuthResolver {
@@ -82,7 +100,21 @@ export class AuthResolver {
     const token = this.extractPlatformToken(request)
     if (!token) return null
 
-    const outcome = await this.options.verifyJwt({ publicKey, issuer }, token)
+    // `authorizedParties`, when configured, binds the token to this app's
+    // origins: a session minted for another app is refused even though its
+    // signature is valid. The platform passes `azp` on the token; the SDK
+    // compares it with the patterns and *allows a missing azp* through, so this
+    // is a narrowing, not the only control — signature, issuer and expiry are
+    // still enforced inside `verifyJwt`.
+    const verifierConfig: {
+      publicKey: string
+      issuer: string
+      authorizedParties?: string[]
+    } = { publicKey, issuer }
+    const parties = this.options.authorizedParties?.() ?? []
+    if (parties.length > 0) verifierConfig.authorizedParties = parties
+
+    const outcome = await this.options.verifyJwt(verifierConfig, token)
     const verified = outcome.result as { userId?: string; claims?: Record<string, unknown> } | null
     if (!verified?.userId) return null
 

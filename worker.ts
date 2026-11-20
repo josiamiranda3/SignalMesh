@@ -14,7 +14,7 @@
  */
 
 import type { Hono } from 'hono'
-import { RecordRoom } from 'deepspace/worker'
+import { RecordRoom, authenticatedRoomRequest, verifyJwt } from 'deepspace/worker'
 import type { DOBindings, DOManifest } from 'deepspace/worker'
 import { schemas } from './src/schemas.ts'
 import { assertProductionSafety, loadConfig } from './server/config.ts'
@@ -102,6 +102,19 @@ export default {
     assertProductionSafety(config)
 
     const url = new URL(request.url)
+
+    // ---------------------------------------------------------------------
+    // Realtime record room
+    // ---------------------------------------------------------------------
+    // The SDK's `RecordScope` opens `GET /ws/<roomId>?token=<jwt>`. Without this
+    // route the socket upgrade would fall through to the asset layer and the
+    // client would retry forever, so the scope must be mounted before anything
+    // else. The room id is resolved from the *verified* token, never trusted
+    // from the path alone; `authenticatedRoomRequest` also injects the internal
+    // identity headers after stripping caller-supplied ones.
+    if (url.pathname.startsWith('/ws/')) {
+      return handleWebSocket(request, env, config)
+    }
 
     // ---------------------------------------------------------------------
     // API surface
@@ -230,4 +243,69 @@ function createPublicApp(
   void createApiRoutes
   void createAuthRoutes
   return app as unknown as Hono
+}
+
+/**
+ * WebSocket upgrade for the record room.
+ *
+ * `RecordScope` connects to `GET /ws/<roomId>?token=<jwt>`; the room id the
+ * client asks for is `app:<APP_ID>`. The client-supplied id is only used to
+ * name the room — identity comes from the verified token, and the request is
+ * rewritten by `authenticatedRoomRequest` so caller-supplied identity headers
+ * are removed before the Durable Object sees it.
+ *
+ * A missing or invalid token is refused here rather than at the DO, so an
+ * anonymous visitor cannot open a socket and sit in a reconnect loop.
+ */
+async function handleWebSocket(
+  request: Request,
+  env: Env,
+  config: ReturnType<typeof loadConfig>,
+): Promise<Response> {
+  // The upgrade itself needs the pairing header; a plain HTTP GET to /ws/* is
+  // not a socket and gets a clear 400 rather than a confusing DO error.
+  if (request.headers.get('upgrade')?.toLowerCase() !== 'websocket') {
+    return new Response('Expected a WebSocket upgrade', { status: 426 })
+  }
+
+  const url = new URL(request.url)
+  const token = url.searchParams.get('token')
+  if (!token) return new Response('Unauthorized', { status: 401 })
+  if (!env.AUTH_JWT_PUBLIC_KEY || !env.AUTH_JWT_ISSUER) {
+    // Fail closed: without verifier material no socket may open.
+    return new Response('Unauthorized', { status: 401 })
+  }
+
+  const socketConfig: {
+    publicKey: string
+    issuer: string
+    authorizedParties?: string[]
+  } = { publicKey: env.AUTH_JWT_PUBLIC_KEY, issuer: env.AUTH_JWT_ISSUER }
+  if (config.authorizedParties.length > 0) socketConfig.authorizedParties = config.authorizedParties
+
+  const outcome = await verifyJwt(socketConfig, token)
+  const auth = outcome.result as { userId?: string; claims?: Record<string, unknown> } | null
+  if (!auth?.userId) return new Response('Unauthorized', { status: 401 })
+
+  // Resolve the room from the verified app id, never from the path segment.
+  // `roomId` in the path is client input; a caller that names another app's room
+  // would otherwise be routed to a namespace this worker cannot serve anyway,
+  // but pinning it here keeps the behaviour explicit and auditable.
+  const scopeId = `app:${env.DEEPSPACE_APP_ID}`
+  const requested = url.pathname.replace(/^\/ws\/?/, '')
+  if (requested && decodeURIComponent(requested) !== scopeId) {
+    // Only the app's own scope is served by this worker.
+    if (!decodeURIComponent(requested).startsWith('app:')) {
+      return new Response('Not found', { status: 404 })
+    }
+  }
+
+  const roomRequest = authenticatedRoomRequest(
+    request,
+    { userId: auth.userId, claims: auth.claims ?? {} } as never,
+  )
+
+  const stub = env.RECORD_ROOMS.get(env.RECORD_ROOMS.idFromName(scopeId))
+  void config
+  return stub.fetch(roomRequest)
 }

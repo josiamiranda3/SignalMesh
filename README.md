@@ -2,7 +2,7 @@
 
 **Research & Evidence Intelligence Platform**
 
-> **v0.2 — arquitetura DeepSpace.** O runtime de produção é um Cloudflare Worker com
+> **v0.2.1 — arquitetura DeepSpace, após auditoria de segurança.** O runtime de produção é um Cloudflare Worker com
 > DeepSpace Auth e DeepSpace Records. O runtime Node com SQLite permanece para
 > desenvolvimento e testes. O app **não está publicado** e **não está registrado** na
 > plataforma — ver [docs/deployment.md](docs/deployment.md).
@@ -292,7 +292,7 @@ registrá-lo e travar a origem permanentemente. Ver
 ```bash
 npm run typecheck        # cliente + servidor
 npm run lint             # ESLint (zero avisos)
-npm run test             # 224 testes (unit + integração)
+npm run test             # 306 testes (unit + integração + contrato)
 npm run test:e2e         # 56 verificações em navegador real
 npm run test:flows       # 22 verificações de fluxos complementares
 npm run audit:design     # auditoria de design em 3 viewports
@@ -305,12 +305,14 @@ Resultados verificados neste ambiente:
 | Suíte | Resultado |
 | --- | --- |
 | Unitários | ✅ 70/70 |
-| Integração | ✅ 154/154 |
+| Integração | ✅ 236/236 |
 | E2E fluxo principal | ✅ 56/56 |
 | E2E fluxos complementares | ✅ 22/22 |
 | Auditoria de design | ✅ 0 problemas |
+| Contrato do Worker | ✅ 17/17 |
 | Worker — empacotamento | ✅ 17/17 |
 | Worker — execução em workerd | ⏭ SKIPPED (workerd não inicia neste ambiente) |
+| Lint de schema do SDK | ✅ 0 avisos |
 
 Detalhes e limitações em [docs/testing.md](docs/testing.md).
 
@@ -419,6 +421,7 @@ O relatório de quotas, riscos e o gate obrigatório está em
 | [docs/api-integrations.md](docs/api-integrations.md) | Exa e Gemini: endpoints, payloads, erros, custos |
 | [docs/testing.md](docs/testing.md) | Estratégia, suítes, resultados reais, limites |
 | [docs/decisions.md](docs/decisions.md) | Decisões e alternativas descartadas |
+| [docs/audit-v0.2.1.md](docs/audit-v0.2.1.md) | Auditoria de segurança: problemas, correções, riscos |
 | [docs/deployment.md](docs/deployment.md) | Gate de implantação, quotas, riscos, checklist |
 
 ## Licença

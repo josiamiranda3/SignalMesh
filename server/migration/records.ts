@@ -22,12 +22,22 @@ import { createId, nowIso } from '../lib/util.ts'
  *    a failure;
  *  - every outcome is reported per collection, so a partial run is diagnosable.
  *
- * What it deliberately does not do: invent an owner. Every migrated row keeps
- * its original `ownerId`, and the store used for the import must therefore be
- * able to write on behalf of those owners (see `createMigrationStore` in
- * `server/services/migration.ts`). Migrating *into* a live app whose record room
- * enforces member RBAC would otherwise be impossible — and that is the correct
- * outcome, not a limitation to work around by weakening permissions.
+ * ## Ownership during import
+ *
+ * Every domain collection marks `ownerId` as `userBound: true`, which means the
+ * Durable Object **stamps the transport identity** and ignores a payload value.
+ * That is the right default (it closes owner spoofing) but it has a consequence
+ * for the migration: writing as owner A produces rows owned by A, whatever
+ * `ownerId` the source row carries.
+ *
+ * The migration therefore requires that each batch be written under the identity
+ * of the owner those rows belong to. `MigrateOptions.assertOwnerBound` defaults
+ * to `true` and refuses a run whose rows do not all belong to the transport
+ * identity — so a multi-owner dump cannot silently become single-owner.
+ *
+ * That is why `scripts/migrate-to-records.ts` takes `--owner` and runs once per
+ * account. Nothing is "fixed" by weakening `userBound`: the row would belong to
+ * the wrong person.
  */
 
 export interface MigrationCounts {
@@ -44,6 +54,7 @@ export interface MigrationReport {
   dryRun: boolean
   collections: Record<string, MigrationCounts>
   errors: Array<{ collection: string; id: string; error: string }>
+  warnings: string[]
 }
 
 export interface MigrateOptions {
@@ -51,8 +62,15 @@ export interface MigrateOptions {
   target: RecordStore
   /** Report what would happen without writing anything. */
   dryRun?: boolean
-  /** Restrict to one owner (useful for a single-account migration). */
-  ownerId?: string
+  /** Owner whose rows are being migrated. Required: see the header note. */
+  ownerId: string
+  /**
+   * Identity the target store writes as. Defaults to `ownerId`, which is the
+   * only correct value for a `userBound` owner column.
+   */
+  transportOwnerId?: string
+  /** Refuse when a row's owner differs from the transport identity. */
+  assertOwnerBound?: boolean
 }
 
 const emptyCounts = (): MigrationCounts => ({
@@ -64,62 +82,40 @@ const emptyCounts = (): MigrationCounts => ({
 })
 
 export async function migrateToRecords(options: MigrateOptions): Promise<MigrationReport> {
-  const { source, target, dryRun = false, ownerId } = options
+  const {
+    source,
+    target,
+    dryRun = false,
+    ownerId,
+    transportOwnerId = ownerId,
+    assertOwnerBound = true,
+  } = options
+
   const startedAt = nowIso()
   const collections: Record<string, MigrationCounts> = {}
   const errors: MigrationReport['errors'] = []
+  const warnings: string[] = []
+
+  if (assertOwnerBound && transportOwnerId !== ownerId) {
+    throw new Error(
+      `A migração seria gravada como ${transportOwnerId}, mas as linhas pertencem a ${ownerId}. ` +
+        'Como ownerId é userBound, o Durable Object carimbaria o proprietário errado. ' +
+        'Execute a migração com a identidade do proprietário dos dados.',
+    )
+  }
 
   const owners = await resolveOwners(source, ownerId)
 
+  const context: RowContext = { source, target, owners, dryRun, errors, warnings, ownerId }
+
   // Order matters: investigations before their children, so a reviewer reading
   // the report sees parents succeed first.
-  collections[COLLECTIONS.investigations] = await migrateInvestigationRows({
-    source,
-    target,
-    owners,
-    dryRun,
-    errors,
-  })
-
-  collections[COLLECTIONS.evidence] = await migrateEvidenceRows({
-    source,
-    target,
-    owners,
-    dryRun,
-    errors,
-  })
-
-  collections[COLLECTIONS.analyses] = await migrateAnalysisRows({
-    source,
-    target,
-    owners,
-    dryRun,
-    errors,
-  })
-
-  collections[COLLECTIONS.validations] = await migrateValidationRows({
-    source,
-    target,
-    owners,
-    dryRun,
-    errors,
-  })
-
-  collections[COLLECTIONS.activityLogs] = await migrateActivityRows({
-    source,
-    target,
-    owners,
-    dryRun,
-    errors,
-  })
-
-  collections[COLLECTIONS.usageRecords] = await migrateUsageRows({
-    source,
-    target,
-    owners,
-    dryRun,
-    errors,
-  })
+  collections[COLLECTIONS.investigations] = await migrateInvestigationRows(context)
+  collections[COLLECTIONS.evidence] = await migrateEvidenceRows(context)
+  collections[COLLECTIONS.analyses] = await migrateAnalysisRows(context)
+  collections[COLLECTIONS.validations] = await migrateValidationRows(context)
+  collections[COLLECTIONS.activityLogs] = await migrateActivityRows(context)
+  collections[COLLECTIONS.usageRecords] = await migrateUsageRows(context)
 
   return {
     startedAt,
@@ -127,6 +123,7 @@ export async function migrateToRecords(options: MigrateOptions): Promise<Migrati
     dryRun,
     collections,
     errors,
+    warnings,
   }
 }
 
@@ -162,6 +159,9 @@ interface RowContext {
   owners: string[]
   dryRun: boolean
   errors: MigrationReport['errors']
+  warnings: string[]
+  /** Owner whose rows are being migrated; every written row must match. */
+  ownerId: string
 }
 
 async function writeRow(
@@ -172,6 +172,19 @@ async function writeRow(
   data: Record<string, unknown>,
 ): Promise<void> {
   counts.read += 1
+
+  // Defence in depth: `userBound` already makes the DO stamp the transport
+  // identity, so a row from another owner would be silently attributed to this
+  // one. Refuse it here, where the mismatch is still visible.
+  const rowOwner = data['ownerId']
+  if (typeof rowOwner === 'string' && rowOwner !== context.ownerId) {
+    counts.skipped += 1
+    context.warnings.push(
+      `${collection}/${id}: pertence a ${rowOwner}, não a ${context.ownerId} — ignorado`,
+    )
+    return
+  }
+
   if (context.dryRun) {
     counts.created += 1
     return
@@ -206,9 +219,7 @@ async function writeRow(
   }
 }
 
-async function migrateInvestigationRows(
-  context: Omit<RowContext, 'dryRun'> & { dryRun: boolean },
-): Promise<MigrationCounts> {
+async function migrateInvestigationRows(context: RowContext): Promise<MigrationCounts> {
   const counts = emptyCounts()
   for (const owner of context.owners) {
     for (const investigation of await context.source.investigations.listByOwner(owner)) {
@@ -405,6 +416,15 @@ export function formatMigrationReport(report: MigrationReport): string {
       lines.push(`  - ${error.collection}/${error.id}: ${error.error}`)
     }
     if (report.errors.length > 50) lines.push(`  … e mais ${report.errors.length - 50}`)
+  }
+
+  if (report.warnings.length > 0) {
+    lines.push('')
+    lines.push('Avisos:')
+    for (const warning of report.warnings.slice(0, 50)) {
+      lines.push(`  - ${warning}`)
+    }
+    if (report.warnings.length > 50) lines.push(`  … e mais ${report.warnings.length - 50}`)
   }
 
   return lines.join('\n')

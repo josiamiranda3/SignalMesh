@@ -1,6 +1,6 @@
 # Gate de implantação
 
-**Estado: NÃO IMPLANTADO.** Nenhum `deepspace deploy`, `push`, `app init`, billing ou
+**Estado: NÃO IMPLANTADO.** A auditoria de segurança da v0.2.1 corrigiu quatro defeitos reais (ver [audit-v0.2.1.md](audit-v0.2.1.md)); o app continua **não registrado** e a integração **não validada** em ambiente real. Nenhum `deepspace deploy`, `push`, `app init`, billing ou
 contratação foi executado. O app **não está registrado** na plataforma: `wrangler.toml` ainda
 carrega o placeholder `__APP_ID__`. Este documento é o relatório exigido antes de qualquer
 publicação e **não** constitui autorização.

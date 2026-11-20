@@ -71,6 +71,11 @@ As collections declaram `ownerField: 'ownerId'` com `read/update/delete: 'own'`.
 envia `X-User-Id` **sem** `X-App-Action`, então o DO resolve o papel do chamador e aplica
 `permissions` **antes** de devolver ou gravar.
 
+`ownerId` é ainda `userBound: true` + `immutable: true`, o que fecha a falha de falsificação
+de posse: sem `userBound`, um membro cria a linha com o id da vítima e a linha passa a
+satisfazer `'own'` para ela. Sem `immutable`, ele a cria como própria e transfere depois.
+O lint do SDK detecta a primeira omissão, e a suíte falha se ela voltar.
+
 A camada inferior não depende de o código lembrar de chamar `requireOwned` — ela aplica a
 política da collection no armazenamento.
 

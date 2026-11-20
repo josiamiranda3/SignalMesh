@@ -9,9 +9,11 @@ Estratégia, o que cada suíte garante e os resultados reais obtidos neste ambie
 ```bash
 npm run typecheck       # tsc cliente + servidor
 npm run lint            # eslint (zero avisos)
-npm run test            # 224 testes (unit + integração)
+npm run test            # 306 testes (unit + integração + contrato do Worker)
 npm run test:unit       # 70 testes
-npm run test:integration # 154 testes
+npm run test:integration # 236 testes
+npm run test:contract   # 17 testes de estrutura do Worker
+npm run check:encoding  # auditoria de UTF-8
 npm run test:e2e        # 56 verificações em navegador real
 npm run test:flows      # 22 verificações de fluxos complementares
 npm run audit:design    # auditoria de design em 3 viewports
@@ -205,17 +207,22 @@ Resultado atual: **nenhum problema**.
 Executados neste ambiente (Windows, Node 24.22.0):
 
 ```
-typecheck (cliente)     ✅ sem erros
-typecheck (servidor)    ✅ sem erros
-lint                    ✅ 0 erros, 0 avisos
-build (SPA)             ✅ concluído
-unit + integração       ✅ 224/224
-e2e fluxo principal     ✅ 56/56
-e2e fluxos              ✅ 22/22
-auditoria de design     ✅ 0 problemas
-worker (empacotamento)  ✅ 17/17
-worker (workerd ao vivo)⏭ SKIPPED — workerd não inicia no ambiente
+typecheck (cliente)      ✅ sem erros
+typecheck (servidor)     ✅ sem erros
+lint                     ✅ 0 erros, 0 avisos
+check:encoding           ✅ 120 arquivos, nenhum problema
+build (SPA)              ✅ concluído
+unit + integração + contrato ✅ 306/306
+e2e fluxo principal      ✅ 56/56
+e2e fluxos               ✅ 22/22
+auditoria de design      ✅ 0 problemas
+worker (empacotamento)   ✅ 17/17
+worker (workerd ao vivo) ⏭ SKIPPED — workerd não inicia no ambiente
+lint de schema do SDK    ✅ 0 avisos (era 8 antes da auditoria v0.2.1)
 ```
+
+A auditoria da v0.2.1 acrescentou 82 testes e corrigiu quatro defeitos reais — ver
+[docs/audit-v0.2.1.md](audit-v0.2.1.md).
 
 ---
 

@@ -53,7 +53,24 @@ export const usersSchema: CollectionSchema = {
 export const investigationsSchema: CollectionSchema = {
   name: 'investigations',
   columns: [
-    { name: 'ownerId', storage: 'text', interpretation: 'plain', required: true },
+    {
+      name: 'ownerId',
+      storage: 'text',
+      interpretation: 'plain',
+      required: true,
+      /**
+       * userBound makes the Durable Object stamp the caller's verified id on
+       * create and restore the stored value on update, so a client cannot
+       * create a row owned by someone else. immutable rejects any attempt to
+       * change it, which turns a silent overwrite into an explicit error.
+       *
+       * Together they are what makes permissions: 'own' meaningful: without
+       * them a member could write ownerId: <outro usuário> and then own the
+       * row. This is the risk the SDK's lintSchemas warns about.
+       */
+      userBound: true,
+      immutable: true,
+    },
     { name: 'title', storage: 'text', interpretation: 'plain', required: true, maxLength: 160 },
     { name: 'description', storage: 'text', interpretation: 'plain', maxLength: 4000 },
     { name: 'objective', storage: 'text', interpretation: 'plain', required: true, maxLength: 2000 },
@@ -76,7 +93,24 @@ export const evidenceSchema: CollectionSchema = {
   name: 'evidence',
   columns: [
     { name: 'investigationId', storage: 'text', interpretation: 'plain', required: true },
-    { name: 'ownerId', storage: 'text', interpretation: 'plain', required: true },
+    {
+      name: 'ownerId',
+      storage: 'text',
+      interpretation: 'plain',
+      required: true,
+      /**
+       * userBound makes the Durable Object stamp the caller's verified id on
+       * create and restore the stored value on update, so a client cannot
+       * create a row owned by someone else. immutable rejects any attempt to
+       * change it, which turns a silent overwrite into an explicit error.
+       *
+       * Together they are what makes permissions: 'own' meaningful: without
+       * them a member could write ownerId: <outro usuário> and then own the
+       * row. This is the risk the SDK's lintSchemas warns about.
+       */
+      userBound: true,
+      immutable: true,
+    },
     { name: 'title', storage: 'text', interpretation: 'plain', required: true, maxLength: 400 },
     { name: 'url', storage: 'text', interpretation: { kind: 'url' }, required: true, maxLength: 2048 },
     /**
@@ -121,7 +155,24 @@ export const analysesSchema: CollectionSchema = {
   name: 'analyses',
   columns: [
     { name: 'investigationId', storage: 'text', interpretation: 'plain', required: true },
-    { name: 'ownerId', storage: 'text', interpretation: 'plain', required: true },
+    {
+      name: 'ownerId',
+      storage: 'text',
+      interpretation: 'plain',
+      required: true,
+      /**
+       * userBound makes the Durable Object stamp the caller's verified id on
+       * create and restore the stored value on update, so a client cannot
+       * create a row owned by someone else. immutable rejects any attempt to
+       * change it, which turns a silent overwrite into an explicit error.
+       *
+       * Together they are what makes permissions: 'own' meaningful: without
+       * them a member could write ownerId: <outro usuário> and then own the
+       * row. This is the risk the SDK's lintSchemas warns about.
+       */
+      userBound: true,
+      immutable: true,
+    },
     { name: 'evidenceIds', storage: 'text', interpretation: { kind: 'json' } },
     { name: 'model', storage: 'text', interpretation: 'plain' },
     { name: 'status', storage: 'text', interpretation: { kind: 'select', options: ['completed', 'failed'] }, required: true },
@@ -150,7 +201,24 @@ export const validationsSchema: CollectionSchema = {
   columns: [
     { name: 'investigationId', storage: 'text', interpretation: 'plain', required: true },
     { name: 'evidenceId', storage: 'text', interpretation: 'plain', required: true },
-    { name: 'ownerId', storage: 'text', interpretation: 'plain', required: true },
+    {
+      name: 'ownerId',
+      storage: 'text',
+      interpretation: 'plain',
+      required: true,
+      /**
+       * userBound makes the Durable Object stamp the caller's verified id on
+       * create and restore the stored value on update, so a client cannot
+       * create a row owned by someone else. immutable rejects any attempt to
+       * change it, which turns a silent overwrite into an explicit error.
+       *
+       * Together they are what makes permissions: 'own' meaningful: without
+       * them a member could write ownerId: <outro usuário> and then own the
+       * row. This is the risk the SDK's lintSchemas warns about.
+       */
+      userBound: true,
+      immutable: true,
+    },
     {
       name: 'status',
       storage: 'text',
@@ -170,7 +238,24 @@ export const activityLogsSchema: CollectionSchema = {
   columns: [
     /** Nullable: the "investigation deleted" event outlives the investigation. */
     { name: 'investigationId', storage: 'text', interpretation: 'plain' },
-    { name: 'ownerId', storage: 'text', interpretation: 'plain', required: true },
+    {
+      name: 'ownerId',
+      storage: 'text',
+      interpretation: 'plain',
+      required: true,
+      /**
+       * userBound makes the Durable Object stamp the caller's verified id on
+       * create and restore the stored value on update, so a client cannot
+       * create a row owned by someone else. immutable rejects any attempt to
+       * change it, which turns a silent overwrite into an explicit error.
+       *
+       * Together they are what makes permissions: 'own' meaningful: without
+       * them a member could write ownerId: <outro usuário> and then own the
+       * row. This is the risk the SDK's lintSchemas warns about.
+       */
+      userBound: true,
+      immutable: true,
+    },
     { name: 'eventType', storage: 'text', interpretation: 'plain', required: true, maxLength: 64 },
     { name: 'description', storage: 'text', interpretation: 'plain', maxLength: 600 },
     { name: 'metadata', storage: 'text', interpretation: { kind: 'json' } },
@@ -191,7 +276,24 @@ export const activityLogsSchema: CollectionSchema = {
 export const usageRecordsSchema: CollectionSchema = {
   name: 'usage_records',
   columns: [
-    { name: 'ownerId', storage: 'text', interpretation: 'plain', required: true },
+    {
+      name: 'ownerId',
+      storage: 'text',
+      interpretation: 'plain',
+      required: true,
+      /**
+       * userBound makes the Durable Object stamp the caller's verified id on
+       * create and restore the stored value on update, so a client cannot
+       * create a row owned by someone else. immutable rejects any attempt to
+       * change it, which turns a silent overwrite into an explicit error.
+       *
+       * Together they are what makes permissions: 'own' meaningful: without
+       * them a member could write ownerId: <outro usuário> and then own the
+       * row. This is the risk the SDK's lintSchemas warns about.
+       */
+      userBound: true,
+      immutable: true,
+    },
     { name: 'provider', storage: 'text', interpretation: { kind: 'select', options: ['exa', 'gemini'] }, required: true },
     { name: 'operation', storage: 'text', interpretation: { kind: 'select', options: ['research', 'analysis'] }, required: true },
     { name: 'status', storage: 'text', interpretation: { kind: 'select', options: ['success', 'error', 'blocked'] }, required: true },
@@ -217,7 +319,24 @@ export const researchQueriesSchema: CollectionSchema = {
   name: 'research_queries',
   columns: [
     { name: 'investigationId', storage: 'text', interpretation: 'plain', required: true },
-    { name: 'ownerId', storage: 'text', interpretation: 'plain', required: true },
+    {
+      name: 'ownerId',
+      storage: 'text',
+      interpretation: 'plain',
+      required: true,
+      /**
+       * userBound makes the Durable Object stamp the caller's verified id on
+       * create and restore the stored value on update, so a client cannot
+       * create a row owned by someone else. immutable rejects any attempt to
+       * change it, which turns a silent overwrite into an explicit error.
+       *
+       * Together they are what makes permissions: 'own' meaningful: without
+       * them a member could write ownerId: <outro usuário> and then own the
+       * row. This is the risk the SDK's lintSchemas warns about.
+       */
+      userBound: true,
+      immutable: true,
+    },
     { name: 'queryHash', storage: 'text', interpretation: 'plain', required: true },
     { name: 'query', storage: 'text', interpretation: 'plain', maxLength: 400 },
     { name: 'resultCount', storage: 'number', interpretation: 'plain' },
@@ -231,7 +350,24 @@ export const researchQueriesSchema: CollectionSchema = {
 export const appSettingsSchema: CollectionSchema = {
   name: 'app_settings',
   columns: [
-    { name: 'ownerId', storage: 'text', interpretation: 'plain', required: true },
+    {
+      name: 'ownerId',
+      storage: 'text',
+      interpretation: 'plain',
+      required: true,
+      /**
+       * userBound makes the Durable Object stamp the caller's verified id on
+       * create and restore the stored value on update, so a client cannot
+       * create a row owned by someone else. immutable rejects any attempt to
+       * change it, which turns a silent overwrite into an explicit error.
+       *
+       * Together they are what makes permissions: 'own' meaningful: without
+       * them a member could write ownerId: <outro usuário> and then own the
+       * row. This is the risk the SDK's lintSchemas warns about.
+       */
+      userBound: true,
+      immutable: true,
+    },
     { name: 'key', storage: 'text', interpretation: 'plain', required: true, maxLength: 120 },
     { name: 'value', storage: 'text', interpretation: 'plain', maxLength: 4000 },
   ],

@@ -58,16 +58,46 @@ no serviço não consegue criar duas evidências para a mesma fonte.
 
 ## 3. Collections
 
-Todas as collections de domínio declaram `ownerField: 'ownerId'` e o bloco de permissões:
+Todas as collections de domínio declaram `ownerField: 'ownerId'`, a coluna de posse em
+`userBound: true` + `immutable: true`, e o bloco de permissões:
 
 ```ts
 ownerField: 'ownerId',
+columns: [
+  // …
+  {
+    name: 'ownerId',
+    storage: 'text',
+    interpretation: 'plain',
+    required: true,
+    userBound: true,   // o DO carimba a identidade verificada, ignora o payload
+    immutable: true,   // e recusa qualquer tentativa de alteração depois
+  },
+],
 permissions: {
   viewer: { read: 'own', create: false, update: false, delete: false },
   member: { read: 'own', create: true,  update: 'own', delete: 'own'   },
   admin:  { read: true,  create: true,  update: true,  delete: true     },
 }
 ```
+
+### Por que `userBound` é obrigatório aqui
+
+`permissions.member.read: 'own'` é avaliado comparando
+`record.data.ownerId === userId`. Se o cliente escolhe o valor de `ownerId` no `create`, ele
+grava `ownerId: <outra pessoa>` e a linha passa a satisfazer `'own'` para essa pessoa — ou
+seja, criação de registros em nome de outra conta, incluindo consumo e auditoria.
+
+`userBound: true` faz o Durable Object **substituir** o valor pela identidade verificada do
+transporte, antes da validação. `immutable: true` fecha a outra metade: sem ele, o atacante
+criaria a linha como própria e a transferiria depois.
+
+O lint do SDK (`lintSchemas`) detecta exatamente essa omissão; a suíte afirma que ele
+continua sem avisos.
+
+**Consequência para importação de dados:** como o carimbo é a identidade do transporte, uma
+importação só é fiel quando roda **como o dono** das linhas. Por isso a migração exige
+`transportOwnerId === ownerId` e roda uma vez por conta (ver §6).
 
 ### 3.1 `investigations`
 

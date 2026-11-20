@@ -119,6 +119,10 @@ async function main(): Promise<void> {
     target,
     dryRun: args.dryRun,
     ownerId: args.owner,
+    // The identity the rows are written as. ownerId is userBound, so the
+    // Durable Object stamps this identity and the source row's owner must match.
+    transportOwnerId: args.owner,
+    assertOwnerBound: true,
   })
 
   console.info(formatMigrationReport(report))

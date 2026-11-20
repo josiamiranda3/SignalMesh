@@ -187,11 +187,30 @@ export function createWorkerServices(options: CreateWorkerServicesOptions): Work
       AUTH_JWT_ISSUER: bindings.AUTH_JWT_ISSUER,
     }),
     ensureUser: async (user) => user,
+    // Bind the token to this app's origins: a valid signature for another app's
+    // session must not authenticate here.
+    authorizedParties: () => config.authorizedParties,
   })
 
+  // Replace only the usage repository, keeping the others intact.
+  //
+  // Spreading `repos` would copy each repository's public methods onto a new
+  // object literal, detaching them from their instance: their bodies call
+  // `this.store`, which would be `undefined` on the copy and every call would
+  // throw. Rebuilding the map preserves the prototypes.
   const services = createServices({
     config,
-    repos: { ...repos, usage: usageWithGlobal },
+    repos: {
+      investigations: repos.investigations,
+      evidence: repos.evidence,
+      analyses: repos.analyses,
+      validations: repos.validations,
+      activity: repos.activity,
+      usage: usageWithGlobal,
+      researchQueries: repos.researchQueries,
+      settings: repos.settings,
+      users: repos.users,
+    },
     auth,
   })
 

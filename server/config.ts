@@ -30,6 +30,13 @@ export interface AppConfig {
   appOrigin: string
   /** Extra origins accepted by the CSRF origin check (preview hosts). */
   allowedOrigins: string[]
+  /**
+   * Origins a platform JWT may be bound to (zp).
+   *
+   * Derived from the app origin; used by the auth resolver to refuse a token
+   * minted for a different app. Empty disables the check.
+   */
+  authorizedParties: string[]
   /** SQLite file used only by the local Node runtime. */
   databaseUrl: string
   sessionSecret: string
@@ -87,6 +94,19 @@ function enumValue<T extends string>(value: string | undefined, allowed: readonl
   return allowed.includes((value ?? '') as T) ? (value as T) : fallback
 }
 
+/**
+ * Origins a platform token may be presented from.
+ *
+ * AZP_ORIGINS wins when set; otherwise the app's own origin (plus any allowed
+ * origin) is used. Under the local Node runtime this list is empty because no
+ * platform token is ever verified.
+ */
+function buildAuthorizedParties(env: EnvBag, appOrigin: string): string[] {
+  const explicit = list(env['AZP_ORIGINS'])
+  if (explicit.length > 0) return explicit
+  return [appOrigin]
+}
+
 function list(value: string | undefined): string[] {
   if (!value) return []
   return value
@@ -131,6 +151,7 @@ export function loadConfig(env: EnvBag = {}, options: LoadConfigOptions = {}): A
     port,
     appOrigin,
     allowedOrigins: list(env['ALLOWED_ORIGINS']),
+    authorizedParties: buildAuthorizedParties(env, appOrigin),
     databaseUrl: env['DATABASE_URL']?.trim() || '.data/signalmess.sqlite',
     sessionSecret: env['SESSION_SECRET']?.trim() || 'signalmess-local-development-secret',
     sessionTtlSeconds: int(env['SESSION_TTL_SECONDS'], 60 * 60 * 24 * 14),
