@@ -10,7 +10,7 @@ import { createServer } from 'node:http'
 import type { AddressInfo } from 'node:net'
 import { serve } from '@hono/node-server'
 import { serveStatic } from '@hono/node-server/serve-static'
-import { buildApp } from '../../server/app.ts'
+import { buildApp } from '../../server/bootstrap.ts'
 import { Page } from './cdp.ts'
 
 let failures = 0

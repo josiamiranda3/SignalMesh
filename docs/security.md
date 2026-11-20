@@ -8,64 +8,84 @@ Modelo de ameaças e os controles implementados, com o teste que prova cada um.
 
 | Fronteira | Confiança | Controle |
 | --- | --- | --- |
-| Navegador → servidor | **não confiável** | sessão verificada, CSRF, validação zod |
-| Servidor → provedores | confiável na saída, **não na entrada** | timeout, mapeamento de erro, validação de resposta |
+| Navegador → Worker | **não confiável** | JWT verificado, CSRF, validação zod, posse |
+| Worker → RecordRoom | autenticada | identidade no header + RBAC do Durable Object |
+| Worker → provedores | confiável na saída, **não na entrada** | timeout, mapeamento de erro, validação de resposta |
 | Conteúdo de fontes | **não confiável** | delimitado no prompt, nunca interpretado como instrução |
-| Servidor → banco | confiável | queries parametrizadas |
+| Worker → armazenamento | confiável | operações parametrizadas pelo protocolo de tools |
 
-O princípio que rege tudo: **o servidor é a única autoridade**. O cliente pode pedir; ele
-não decide.
+O princípio: **o servidor é a única autoridade**. O cliente pede; ele não decide.
 
 ---
 
 ## 2. Autenticação
 
-### 2.1 Sessão
+### 2.1 DeepSpace Auth (produção)
 
-- Token de 256 bits (`crypto.randomBytes(32).toString('base64url')`).
-- Apenas o **hash SHA-256** é persistido; o token existe só no cookie.
-- Cookie: `HttpOnly`, `SameSite=Lax`, `Path=/`, `Secure` quando a origem é HTTPS.
-- `Max-Age` configurável (`SESSION_TTL_SECONDS`, padrão 14 dias).
-- Logout apaga a linha da sessão — revogação imediata, não expiração preguiçosa.
-- Sessões expiradas são removidas na emissão de uma nova.
+- A identidade chega como **JWT assinado** pela plataforma e é verificada com `verifyJwt`
+  usando `AUTH_JWT_PUBLIC_KEY` + `AUTH_JWT_ISSUER`, ambos injetados pelo runtime.
+- A aplicação **não emite, assina, renova nem armazena** JWT. Não existe segredo de
+  assinatura no código, no repositório ou no bundle.
+- Token lido do header `Authorization: Bearer` (o que o SDK anexa) ou, na navegação
+  same-origin, do cookie de sessão da plataforma.
+- Sem chave ou emissor configurados, o resolvedor **falha fechado**: retorna "não
+  autenticado" em vez de confiar em um header.
 
-### 2.2 Verificação por requisição
+### 2.2 Adaptador local (exclusivo de teste)
 
-`requireUser` resolve o cookie em uma linha de `users` **a cada requisição**. Não há
-claims assinados a validar; não há janela em que uma sessão revogada continue válida.
+- Token opaco de 256 bits; só o SHA-256 é persistido.
+- Cookie `HttpOnly`, `SameSite=Lax`, `Secure` sob HTTPS.
+- Recusado por `assertProductionSafety` quando:
+  - o runtime é o Worker, **ou**
+  - `NODE_ENV=production`.
+- O endpoint `POST /api/auth/login` responde `404` em modo DeepSpace: não existe caminho
+  alternativo de entrada em produção.
 
-### 2.3 Adaptador local
+### 2.3 Verificação por requisição
 
-O adaptador aceita o e-mail informado sem senha. Isso é aceitável **apenas** em um
-ambiente controlado pelo operador, e está:
+`requireUser` resolve a identidade em **toda** requisição privada e carrega o `UserRecord`.
+Nenhuma rota de negócio executa sem esse passo.
 
-- documentado na interface ("Autenticação deste ambiente");
-- desativado em `NODE_ENV=production` (responde `403` explicando que é preciso configurar
-  o DeepSpace Auth);
-- coberto por teste.
+### Testes
+
+`tests/integration/auth-deepspace.test.ts` (21 casos), incluindo:
+
+- o modo é derivado do runtime, não de variável controlável pelo cliente;
+- falha fechada quando as bindings de verificação faltam;
+- o modo DeepSpace nunca consulta a sessão local;
+- o modo local ignora um Bearer token;
+- um Worker configurado para o adaptador local não sobe.
 
 ---
 
-## 3. Autorização
+## 3. Autorização — duas camadas independentes
 
-### 3.1 Posse
+### 3.1 Serviço
 
-Toda operação sobre recurso existente passa por `requireOwned`, que compara
-`ownerId` com o usuário da sessão. Recursos de outro usuário respondem **`404`**, não
-`403` — a diferença importa: `403` confirmaria a existência do registro.
+`requireOwned` compara `ownerId` e responde **`404`** (não `403`): `403` confirmaria a
+existência do registro.
 
-### 3.2 Nenhum caminho alternativo
+### 3.2 Durable Object
+
+As collections declaram `ownerField: 'ownerId'` com `read/update/delete: 'own'`. O Worker
+envia `X-User-Id` **sem** `X-App-Action`, então o DO resolve o papel do chamador e aplica
+`permissions` **antes** de devolver ou gravar.
+
+A camada inferior não depende de o código lembrar de chamar `requireOwned` — ela aplica a
+política da collection no armazenamento.
+
+### 3.3 Nenhum caminho alternativo
 
 - O cliente nunca envia `ownerId`; o servidor ignora se enviar.
-- A consulta à Exa e a chamada ao Gemini só acontecem **depois** do `requireOwned`.
+- Pesquisa e análise só acontecem depois do `requireOwned`.
 - Exportação lê apenas a investigação do chamador.
-- Um teste verifica que uma tentativa de pesquisa em investigação alheia produz `404` **e
-  zero chamadas ao provedor** — a ordem importa.
 
-### 3.3 Testes
+### Testes
 
-`tests/integration/auth-isolation.test.ts` — 8 casos cobrindo leitura, escrita, exclusão,
-exportação, listagem, evidência e validação entre dois usuários.
+`tests/integration/auth-isolation.test.ts` (8 casos via HTTP) e
+`tests/integration/records-security.test.ts` (9 casos **diretamente no armazenamento**),
+incluindo leitura por id, atualização, exclusão, `deleteWhere` e consulta entre dois
+usuários.
 
 ---
 
@@ -74,56 +94,49 @@ exportação, listagem, evidência e validação entre dois usuários.
 Métodos mutantes exigem:
 
 1. header `x-signalmess-request: 1`;
-2. `Origin` igual a `APP_ORIGIN` (quando o header está presente).
+2. `Origin` igual à origem do próprio app (a mesma da requisição) ou a `APP_ORIGIN` /
+   `ALLOWED_ORIGINS`.
 
-O cookie `SameSite=Lax` já bloqueia a maioria dos POSTs cross-site; o header é a segunda
-camada, porque `Lax` não cobre todos os navegadores e fluxos. Sem o header → `403`.
+Aceitar a origem da própria requisição é correto e não afrouxa nada: o navegador não
+consegue reportar a origem do atacante e a do app ao mesmo tempo, e o header marcador não
+pode ser definido cross-origin sem um preflight que o app não concede. A checagem por
+`APP_ORIGIN` cobre proxy reverso que reescreve host.
 
-Testado em `tests/integration/auth-isolation.test.ts` (`CSRF and origin protection`).
+Sem header → `403`.
 
 ---
 
-## 5. Entrada
+## 5. Entrada e conteúdo
 
 ### 5.1 Validação
 
-Todo corpo e toda query string passam por um schema zod antes do serviço. Não existe
-handler que leia `c.req.json()` e use o valor diretamente.
+Todo corpo e query passam por schema zod antes do serviço. Nenhum handler usa
+`c.req.json()` diretamente.
 
-Testes de schema: `tests/unit/schemas.test.ts` (30 casos).
+### 5.2 Injeção
 
-### 5.2 SQL
-
-Todas as queries usam parâmetros posicionais:
-
-```ts
-run(db, 'UPDATE investigations SET title = ? WHERE id = ?', [title, id])
-```
-
-Nenhuma concatenação de string com valor de usuário. O único SQL montado
-dinamicamente são cláusulas `WHERE` a partir de uma **lista fixa** de colunas.
+Todas as consultas SQLite usam parâmetros posicionais. O adaptador Records não monta
+consulta: envia operações tipadas ao DO, que valida o nome de cada campo do `where`
+(um campo desconhecido é recusado).
 
 ### 5.3 URLs
 
-`isSafeHttpUrl` só aceita `http:` e `https:`. Isso bloqueia:
-
-- `javascript:` (execução de script no contexto da página);
-- `data:` (phishing embutido);
-- `file:` (leitura local em alguns contextos).
-
-Aplicado em dois pontos: validação de entrada de evidência e antes de renderizar qualquer
-`<a href>` vindo de dados de provedor.
+`isSafeHttpUrl` só aceita `http:` e `https:`, bloqueando `javascript:`, `data:` e `file:`.
+Aplicado na entrada de evidência e antes de renderizar qualquer `<a href>` vindo de
+provedor.
 
 ### 5.4 Conteúdo de fontes
 
-A resposta da Exa pode conter HTML e instruções dirigidas a modelos ("ignore as regras
-anteriores"). Tratamento:
-
-1. `stripHtml` remove `script`, `style` e tags antes de exibir/armazenar;
-2. no prompt, cada fonte vai dentro de `<fonte id="...">…</fonte>`;
-3. a instrução de sistema diz explicitamente que o conteúdo é dado, não comando;
+1. `stripHtml` remove `script`/`style`/tags;
+2. no prompt, cada fonte vai dentro de `<fonte id="…">…</fonte>`;
+3. a instrução de sistema diz que o conteúdo é dado, não comando;
 4. a saída do modelo é validada por schema — um desvio de instrução não vira estrutura
    aceita.
+
+### 5.5 Limites de tamanho
+
+`maxLength` declarado nas collections e no zod. O Durable Object recusa um valor acima do
+limite antes de gravar (verificado em `records-security.test.ts`).
 
 ---
 
@@ -131,73 +144,63 @@ anteriores"). Tratamento:
 
 | Segredo | Onde vive | Onde **não** vive |
 | --- | --- | --- |
-| `EXA_API_KEY` | ambiente do servidor | cliente, banco, export, logs |
-| `GEMINI_API_KEY` | ambiente do servidor | cliente, banco, export, logs |
-| `SESSION_SECRET` | ambiente do servidor | cliente |
-| Token de sessão | cookie `HttpOnly` | `localStorage`, URL, resposta JSON |
+| `EXA_API_KEY` | secrets do Worker / ambiente | cliente, banco, export, logs, bundle |
+| `GEMINI_API_KEY` | secrets do Worker / ambiente | idem |
+| Chave de sessão local | ambiente (só runtime Node) | cliente |
 
 Verificações automatizadas:
 
-- `tests/integration/crud-export.test.ts` confirma que export JSON/CSV não contêm chaves
-  nem `signalmess_session`;
-- o teste de settings confirma que a resposta da API não inclui os valores das chaves;
-- o teste E2E confirma que a interface não exibe nenhuma chave.
+- `tests/worker/run-worker-smoke.ts` inspeciona o bundle e confirma que nenhum valor de
+  chave foi embutido e que o interruptor de custo é lido em runtime;
+- `tests/integration/crud-export.test.ts` confirma que export JSON/CSV não contém chaves nem
+  sessão;
+- o teste E2E confirma que a interface não exibe chaves.
 
-`.gitignore` cobre `.env`, `.env.*`, `.dev.vars*`, `*.pem`, `*.key`, `.data/` e `*.sqlite`.
+`.gitignore` cobre `.env`, `.env.*`, `.dev.vars*`, `*.pem`, `*.key`, `.data/`, `*.sqlite`,
+`.wrangler*`.
+
+**Nunca** use `secrets get --plain` para levar um valor a um lugar onde ele vaze.
 
 ---
 
 ## 7. Proteção de custo como controle de segurança
 
-Uma cobrança não autorizada é um incidente tanto quanto um vazamento. Controles:
+Uma cobrança não autorizada é um incidente tanto quanto um vazamento.
 
 | Controle | Implementação | Teste |
 | --- | --- | --- |
-| Interruptor global | `ENABLE_EXTERNAL_APIS=false` por padrão; `assertUsable` em cada cliente | `blocks every provider call when external APIs are disabled` |
+| Interruptor global | `ENABLE_EXTERNAL_APIS=false` por padrão | `blocks every provider call when external APIs are disabled` |
 | Chave ausente | erro explícito citando a variável | `blocks the provider when the API key is missing` |
 | Cota por usuário/dia | `usage.reserve` no backend | `enforces the per-user daily research limit` |
-| Cota global/dia | idem | idem |
-| Uma operação simultânea | single-flight por `userId:operation` | — (protegido no mesmo caminho) |
+| Cota global/dia | leitor administrativo de agregado | idem |
+| Uma operação simultânea | single-flight por `userId:operation` | protegido no mesmo caminho |
 | Consulta duplicada | hash + janela configurável | `blocks an identical research query inside the duplicate guard window` |
-| Sem retry automático | nenhum laço de tentativa nos clientes | testes de 401/429/500 verificam 1 requisição |
+| Sem retry automático | nenhum laço nos clientes | testes de 401/429/500 verificam 1 requisição |
 | Registro de bloqueios | `usage_records.status = 'blocked'` | `records blocked attempts so the operator can audit refusals` |
 
-A cota é verificada **antes** da chamada e registrada **depois** — o registro acontece nos
-dois desfechos, para que uma falha do provedor não consuma silenciosamente a cota sem
-deixar rastro.
+O teto global usa um transporte administrativo **apenas** para somar; ele devolve um número
+e nunca uma linha. Ver [docs/database.md](database.md#5-consumo-global).
 
 ---
 
 ## 8. Erros e logs
-
-### 8.1 Respostas
 
 | Situação | Cliente recebe |
 | --- | --- |
 | Erro de validação | `400` + detalhes por campo |
 | Sem sessão | `401` + mensagem de ação |
 | Recurso de outro usuário | `404` |
-| CSRF ausente | `403` |
-| Cota esgotada | `429` + código `quota_exceeded` |
-| Provedor 429 | `429` + código `provider_rate_limited` |
-| Provedor 401/403 | `502` + código `provider_auth_failed` |
-| Provedor lento | `504` + código `provider_timeout` |
-| Exceção inesperada | `500` + mensagem genérica + `requestId` |
+| CSRF ausente / origem estranha | `403` |
+| Cota esgotada | `429` + `quota_exceeded` |
+| Provedor 429 | `429` + `provider_rate_limited` |
+| Provedor 401/403 | `502` + `provider_auth_failed` |
+| Provedor lento | `504` + `provider_timeout` |
+| Exceção inesperada | `500` genérico + `requestId` |
 
-Nunca: stack trace, texto de SQL, caminho de arquivo, nome de variável de ambiente com
-valor.
+Nunca: stack trace, texto de SQL, caminho de arquivo, valor de variável de ambiente.
 
-### 8.2 Logs
-
-O que é registrado:
-- método, caminho, status, `requestId`;
-- mensagem de erro tipada.
-
-O que **não** é registrado:
-- corpos de requisição ou resposta;
-- cookies, tokens, `Authorization`;
-- chaves de API;
-- e-mail ou conteúdo de evidência.
+Logs registram método, caminho, status e `requestId` — nunca corpos, cookies, tokens ou
+chaves.
 
 ---
 
@@ -205,27 +208,29 @@ O que **não** é registrado:
 
 | Ameaça | Controle | Residual |
 | --- | --- | --- |
-| Acesso a dados de outro usuário | posse verificada no serviço; `404` | — |
-| Enumeração de ids | ids com timestamp + 32 bits aleatórios; `404` uniforme | baixa |
+| Acesso a dados de outro usuário | posse no serviço **+** RBAC no DO | — |
+| JWT forjado | assinatura verificada com chave pública da plataforma | — |
+| Sessão local usada em produção | recusada em build e em runtime | — |
+| Enumeração de ids | ids aleatórios; `404` uniforme | baixa |
 | CSRF | header + origem + `SameSite` | — |
-| XSS via conteúdo de fonte | sem `dangerouslySetInnerHTML`; `stripHtml`; React escapa por padrão | — |
+| XSS via conteúdo de fonte | sem `dangerouslySetInnerHTML`; `stripHtml`; React escapa | — |
 | Open redirect no login | `next` só aceita caminho relativo same-origin | — |
-| Força bruta no login | rate limit por sessão/rota | parcial (sem conta, sem bloqueio por IP) |
-| Sequestro de sessão | cookie `HttpOnly` + `Secure`; token opaco; revogável | depende de HTTPS em produção |
-| Prompt injection via fontes | delimitação + instrução de sistema + validação de schema | o modelo pode ainda ser influenciado; por isso a análise exige validação humana |
+| Prompt injection via fontes | delimitação + instrução + validação de schema | modelo pode ser influenciado; por isso há validação humana |
 | Fabricação de referências | validação contra o conjunto real de ids | — |
 | Cobrança não autorizada | interruptores, cotas, sem retry | — |
-| Vazamento de segredo em export | export monta objeto com campos explícitos | — |
-| Negação de serviço por operação longa | timeouts em todos os clientes | parcial |
+| Vazamento de segredo no bundle | verificação automatizada do artefato | — |
+| Exclusão indevida em massa | `deleteWhere` exige `where` e limita a página; RBAC por linha | — |
+| Auditoria reescrita pelo usuário | `activity_logs` append-only para membros | — |
 
 ---
 
-## 10. O que fazer antes de expor publicamente
+## 10. Antes de expor publicamente
 
-1. `NODE_ENV=production` com `SESSION_SECRET` de 32+ caracteres aleatórios (o app recusa
-   subir sem isso).
-2. HTTPS obrigatório (o cookie passa a `Secure` automaticamente).
-3. Substituir o adaptador local pelo DeepSpace Auth.
-4. Mover o rate limiting para um store compartilhado se houver mais de uma instância.
-5. Definir `ENABLE_EXTERNAL_APIS=true` **somente** com chaves próprias e cotas revisadas.
-6. Manter `ENABLE_PAID_OPERATIONS=false` a menos que o proprietário autorize por escrito.
+1. Registrar o app (`npx deepspace app init`) — decisão permanente de origem do código.
+2. Definir `EXA_API_KEY` e `GEMINI_API_KEY` com `npx deepspace secrets set`.
+3. Manter `ENABLE_EXTERNAL_APIS=false` até revisar cotas; ligar só então.
+4. Manter `ENABLE_PAID_OPERATIONS=false` sem autorização escrita.
+5. Revisar `RESEARCH_GLOBAL_DAILY_LIMIT` / `ANALYSIS_GLOBAL_DAILY_LIMIT` para o público
+   esperado.
+6. Confirmar HTTPS (a plataforma fornece) e que `APP_ORIGIN` reflete o domínio público.
+7. Rodar `npm run test:worker` em um ambiente que permita ao workerd iniciar.

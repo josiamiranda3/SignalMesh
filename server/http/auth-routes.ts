@@ -4,6 +4,7 @@ import type { SessionUser } from '../../shared/api.ts'
 import type { AppEnv } from './middleware.ts'
 import { requireUser, toPublicUser } from './middleware.ts'
 import { errors } from '../lib/errors.ts'
+import { describeAuthMode } from '../lib/auth-resolver.ts'
 import {
   buildClearSessionCookie,
   buildSessionCookie,
@@ -14,17 +15,25 @@ import {
 import { createId, nowIso } from '../lib/util.ts'
 
 /**
- * Local authentication adapter.
+ * Authentication routes.
  *
- * DeepSpace Auth is the production mechanism and is wired in the worker
- * adapter (a verified JWT arrives from the platform). The local runtime needs a
- * real, persistent, revocable session to exercise the app end to end, so this
- * adapter issues its own session through the same `sessions` table and the same
- * `requireUser` middleware the rest of the API uses.
+ * ## DeepSpace mode (production and `deepspace dev start`)
  *
- * This is explicitly a development identity provider: it trusts the email the
- * operator types, which is acceptable only on a machine the operator controls.
- * The UI labels it accordingly and the server refuses it in production.
+ * Sign-in happens through the platform's own auth worker, driven in the browser
+ * by `AuthOverlay` / `signIn()` from the SDK. The app therefore exposes only:
+ *
+ *   - `GET /config` — which adapter is active, for honest UI copy
+ *   - `GET /me`     — the verified caller, read from a verified JWT
+ *   - `POST /logout`— clears the platform session cookie and confirms
+ *
+ * `/login` returns 404 in this mode: there is no local credential endpoint to
+ * call, and presenting one would invite a parallel auth system.
+ *
+ * ## Local mode (tests only)
+ *
+ * `/login` issues a session row used by the integration and browser suites. The
+ * runtime refuses this adapter on the platform (`assertProductionSafety`), so it
+ * cannot be reached from a deployed app.
  */
 
 const loginSchema = z.object({
@@ -35,18 +44,12 @@ const loginSchema = z.object({
 export function createAuthRoutes(): Hono<AppEnv> {
   const app = new Hono<AppEnv>()
 
-  /** Describe which auth adapter is active so the UI can label it honestly. */
+  /** Describe the active adapter so the UI can label itself honestly. */
   app.get('/config', (c) => {
     const services = c.get('services')
     return c.json({
       success: true as const,
-      data: {
-        authMode: 'local' as const,
-        environment: services.config.nodeEnv,
-        signInLabel: 'Entrar com e-mail (ambiente local)',
-        providerLabel: 'Autenticação local de desenvolvimento',
-        deepspaceAuthAvailable: false,
-      },
+      data: describeAuthMode(services.config.authMode, services.config.nodeEnv),
     })
   })
 
@@ -58,12 +61,11 @@ export function createAuthRoutes(): Hono<AppEnv> {
 
   app.post('/login', async (c) => {
     const services = c.get('services')
-    if (services.config.nodeEnv === 'production') {
-      // Production must use DeepSpace Auth; the local adapter is not a
-      // substitute for a real identity provider.
-      throw errors.forbidden(
-        'A autenticação local está desativada em produção. Configure o DeepSpace Auth.',
-      )
+
+    if (services.config.authMode !== 'local') {
+      // DeepSpace apps authenticate through the platform. There is deliberately
+      // no credential endpoint here to call.
+      throw errors.notFound('Este ambiente usa a autenticação DeepSpace; entre pela plataforma.')
     }
 
     const body = await c.req.json().catch(() => null)
@@ -91,36 +93,61 @@ export function createAuthRoutes(): Hono<AppEnv> {
         createdAt: nowIso(),
       }))
 
-    const session = await services.sessions.issue(user.id)
+    // The session store only exists on the Node runtime.
+    const sessions = (services as unknown as { sessions?: { issue(userId: string): Promise<{ token: string }> } })
+      .sessions
+    if (!sessions) {
+      throw errors.notFound('Sessões locais não estão disponíveis neste runtime.')
+    }
+
+    const session = await sessions.issue(user.id)
     const secure = services.config.appOrigin.startsWith('https://')
 
-    return new Response(
-      JSON.stringify({ success: true, data: toPublicUser(user) }),
-      {
-        status: 200,
-        headers: {
-          'content-type': 'application/json; charset=utf-8',
-          'set-cookie': buildSessionCookie(session.token, {
-            maxAge: services.config.sessionTtlSeconds,
-            secure,
-          }),
-        },
-      },
-    )
-  })
-
-  app.post('/logout', async (c) => {
-    const services = c.get('services')
-    const cookies = parseCookieHeader(c.req.header('cookie') ?? null)
-    const token = cookies[SESSION_COOKIE]
-    if (token) await services.sessions.revoke(token)
-    const secure = services.config.appOrigin.startsWith('https://')
-    return new Response(JSON.stringify({ success: true, data: { signedOut: true } }), {
+    return new Response(JSON.stringify({ success: true, data: toPublicUser(user) }), {
       status: 200,
       headers: {
         'content-type': 'application/json; charset=utf-8',
-        'set-cookie': buildClearSessionCookie(secure),
+        'set-cookie': buildSessionCookie(session.token, {
+          maxAge: services.config.sessionTtlSeconds,
+          secure,
+        }),
       },
+    })
+  })
+
+  /**
+   * Sign out.
+   *
+   * In DeepSpace mode the platform owns the session, so this expires the app's
+   * copy of the platform cookie and returns; the SDK's `signOut()` performs the
+   * authoritative revocation against the auth worker. The handler does not call
+   * the auth worker itself, which would need an outbound request per logout.
+   */
+  app.post('/logout', async (c) => {
+    const services = c.get('services')
+    const secure = services.config.appOrigin.startsWith('https://')
+
+    if (services.config.authMode === 'local') {
+      const cookies = parseCookieHeader(c.req.header('cookie') ?? null)
+      const token = cookies[SESSION_COOKIE]
+      const sessions = (services as unknown as { sessions?: { revoke(token: string): Promise<void> } }).sessions
+      if (token && sessions) await sessions.revoke(token)
+    }
+
+    const headers: Record<string, string> = {
+      'content-type': 'application/json; charset=utf-8',
+      'set-cookie': buildClearSessionCookie(secure),
+    }
+    if (services.config.authMode === 'deepspace') {
+      // Expire the platform session cookie on this origin too, so a reload does
+      // not silently re-authenticate from a cookie the user just signed out of.
+      headers['set-cookie'] =
+        `${buildClearSessionCookie(secure)}, __Secure-better-auth.session_token=; Path=/; HttpOnly; SameSite=Lax; Max-Age=0${secure ? '; Secure' : ''}`
+    }
+
+    return new Response(JSON.stringify({ success: true, data: { signedOut: true } }), {
+      status: 200,
+      headers,
     })
   })
 

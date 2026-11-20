@@ -18,7 +18,7 @@
  *   node --experimental-transform-types tests/e2e/design-audit.ts
  */
 
-import { buildApp } from '../../server/app.ts'
+import { buildApp } from '../../server/bootstrap.ts'
 import { serve } from '@hono/node-server'
 import { serveStatic } from '@hono/node-server/serve-static'
 import { Page } from './cdp.ts'

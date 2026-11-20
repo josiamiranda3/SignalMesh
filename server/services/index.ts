@@ -1,10 +1,8 @@
 import type { AppConfig } from '../config.ts'
-import type { Database } from '../db.ts'
-import { createSqliteRepositories } from '../repositories/sqlite.ts'
 import type { Repositories } from '../repositories/ports.ts'
 import { ExaClient } from '../integrations/exa.ts'
 import { GeminiClient } from '../integrations/gemini.ts'
-import { SessionStore } from '../lib/sessions.ts'
+import type { AuthResolver } from '../lib/auth-resolver.ts'
 import { ActivityService } from './activity.ts'
 import { AnalysisService } from './analysis.ts'
 import { DashboardService } from './dashboard.ts'
@@ -18,14 +16,19 @@ import { ValidationService } from './validation.ts'
 /**
  * Composition root.
  *
- * Wiring lives here and nowhere else. Swapping the persistence adapter (for
- * DeepSpace Records or another database) means constructing different
- * repositories; every service below is unaware of the storage engine.
+ * This module is platform-neutral: it takes a `Repositories` implementation and
+ * an `AuthResolver`, and builds every service. It imports nothing from Node and
+ * nothing from the Worker, so the same wiring runs under `@hono/node-server`
+ * and inside a Cloudflare Worker.
+ *
+ * Runtime-specific construction lives in:
+ *   - `server/services/node.ts`   (SQLite + local sessions)
+ *   - `server/services/worker.ts` (DeepSpace Records + verified JWT)
  */
 export interface Services {
   config: AppConfig
   repos: Repositories
-  sessions: SessionStore
+  auth: AuthResolver
   activity: ActivityService
   usage: UsageService
   investigations: InvestigationService
@@ -37,11 +40,15 @@ export interface Services {
   exports: ExportService
   exa: ExaClient
   gemini: GeminiClient
-  db: Database
 }
 
-export function createServices(config: AppConfig, db: Database): Services {
-  const repos = createSqliteRepositories(db)
+export function createServices(input: {
+  config: AppConfig
+  repos: Repositories
+  auth: AuthResolver
+}): Services {
+  const { config, repos, auth } = input
+
   const activity = new ActivityService(repos)
   const usage = new UsageService(repos, config)
   const investigations = new InvestigationService(repos, activity)
@@ -53,12 +60,11 @@ export function createServices(config: AppConfig, db: Database): Services {
   const validation = new ValidationService(repos, investigations, evidence, activity)
   const dashboard = new DashboardService(repos, activity, usage)
   const exports = new ExportService(repos, investigations, activity)
-  const sessions = new SessionStore(db, repos.users, config.sessionTtlSeconds)
 
   return {
     config,
     repos,
-    sessions,
+    auth,
     activity,
     usage,
     investigations,
@@ -70,6 +76,5 @@ export function createServices(config: AppConfig, db: Database): Services {
     exports,
     exa,
     gemini,
-    db,
   }
 }

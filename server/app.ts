@@ -1,58 +1,53 @@
 import { Hono } from 'hono'
 import type { ApiErrorPayload } from '../shared/api.ts'
-import { assertProductionSafety, loadConfig, type AppConfig } from './config.ts'
-import { openDatabase, type Database } from './db.ts'
-import { createServices, type Services } from './services/index.ts'
+import type { AppConfig } from './config.ts'
+import type { Services } from './services/index.ts'
 import { AppError } from './lib/errors.ts'
 import { withServices, csrfGuard, type AppEnv } from './http/middleware.ts'
 import { createAuthRoutes } from './http/auth-routes.ts'
 import { createApiRoutes, toErrorResponse } from './http/api-routes.ts'
-import { seedDemoData } from './seed.ts'
 
 /**
  * Application assembly.
  *
- * Exported separately from the process bootstrap so integration tests can build
- * a complete app against an in-memory database and exercise the real HTTP
- * surface, middleware and services.
+ * Platform-neutral: it takes an already-wired `Services` bundle and mounts the
+ * routes. It imports nothing from Node and nothing from the Worker, so the same
+ * app object runs under `@hono/node-server` and inside a Cloudflare Worker.
+ *
+ * Mounting order is part of the contract:
+ *   1. services on every request
+ *   2. health probe (no auth, no secrets)
+ *   3. CSRF guard on `/api/*`
+ *   4. auth routes
+ *   5. business routes
+ *   6. not-found and error handlers
  */
 
-export interface BuiltApp {
-  app: Hono<AppEnv>
+export interface CreateAppOptions {
   services: Services
   config: AppConfig
-  db: Database
-  close: () => void
+  /** Report the storage backend in the health payload. */
+  storage: 'sqlite' | 'records'
 }
 
-export interface BuildOptions {
-  /** Override environment values (tests use a fresh in-memory database). */
-  env?: Partial<NodeJS.ProcessEnv>
-  /** Reuse a database handle instead of opening the configured path. */
-  database?: Database
-  /** Seed the explicitly-labelled demo investigation. */
-  seed?: boolean
-}
-
-export async function buildApp(options: BuildOptions = {}): Promise<BuiltApp> {
-  const config = loadConfig({ ...process.env, ...options.env })
-  assertProductionSafety(config)
-
-  const db = options.database ?? openDatabase(config.databaseUrl)
-  const services = createServices(config, db)
+export function createApp(options: CreateAppOptions): Hono<AppEnv> {
+  const { services, config, storage } = options
 
   const app = new Hono<AppEnv>()
   app.use('*', withServices(services))
 
-  // Health probe: no auth, no secrets, no internals beyond a status word.
+  // Health probe: no auth, no secrets, nothing beyond a status word.
   app.get('/api/health', (c) =>
     c.json({
       success: true as const,
       data: {
         status: 'ok' as const,
-        version: '0.1.0',
+        version: '0.2.0',
         time: new Date().toISOString(),
         database: 'ok' as const,
+        storage,
+        runtime: config.runtime,
+        authMode: config.authMode,
       },
     }),
   )
@@ -89,15 +84,5 @@ export async function buildApp(options: BuildOptions = {}): Promise<BuiltApp> {
     return c.json(body as { success: false; error: ApiErrorPayload }, status as never)
   })
 
-  if (options.seed ?? config.seedDemoData) {
-    await seedDemoData(services)
-  }
-
-  return {
-    app,
-    services,
-    config,
-    db,
-    close: () => db.close(),
-  }
+  return app
 }

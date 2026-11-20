@@ -35,6 +35,14 @@ export interface InvestigationRepository {
   update(id: string, patch: Partial<Investigation>): Promise<Investigation | null>
   remove(id: string): Promise<boolean>
   countByStatus(ownerId: string): Promise<Record<string, number>>
+  /**
+   * Every owner id that has at least one investigation.
+   *
+   * Optional because it only makes sense for an adapter that can see all rows —
+   * the migration CLI uses it to enumerate what to copy. A member-scoped
+   * DeepSpace transport cannot answer it, and does not implement it.
+   */
+  listAllOwners?(): Promise<string[]>
 }
 
 export interface EvidenceRepository {
@@ -75,8 +83,29 @@ export interface ActivityRepository {
 
 export interface UsageRepository {
   create(input: UsageRecord): Promise<UsageRecord>
+  /**
+   * Sum of `quantity` for a window.
+   *
+   * `ownerId: null` asks for the platform-wide total, which is what the global
+   * daily ceiling uses. An adapter that can only read the caller's own rows
+   * (DeepSpace Records with row RBAC on) implements that case through a
+   * dedicated admin-scoped counter instead of widening the read policy — see
+   * `server/repositories/records/repositories.ts`.
+   */
   countInWindow(ownerId: string | null, operation: string, since: string): Promise<number>
   listByOwner(ownerId: string, limit: number): Promise<UsageRecord[]>
+}
+
+/**
+ * Optional capability: batching several writes atomically.
+ *
+ * Only the adapters that can offer it implement it, and callers must feature
+ * detect. SQLite has real transactions; DeepSpace Records does not expose one
+ * across multiple records, so it omits the method and callers fall back to
+ * sequential writes.
+ */
+export interface TransactableRepositories {
+  transaction<T>(fn: () => Promise<T>): Promise<T>
 }
 
 export interface ResearchQueryRepository {
@@ -94,8 +123,15 @@ export interface ResearchQueryRepository {
 }
 
 export interface SettingsRepository {
-  get(key: string): Promise<string | null>
-  set(key: string, value: string): Promise<void>
+  /**
+   * Read a preference.
+   *
+   * `ownerId` is optional and matters only to adapters that scope settings per
+   * user (DeepSpace Records, where every row carries `ownerId`). The SQLite
+   * adapter keys by `key` alone, so passing it is harmless.
+   */
+  get(key: string, ownerId?: string): Promise<string | null>
+  set(key: string, value: string, ownerId?: string): Promise<void>
   all(): Promise<Record<string, string>>
 }
 

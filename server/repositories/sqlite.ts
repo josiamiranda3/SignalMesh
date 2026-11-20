@@ -360,6 +360,15 @@ class SqliteInvestigationRepository implements InvestigationRepository {
     for (const row of rows) result[row.status] = row.count
     return result
   }
+
+  /** Used by the migration CLI: which owners have data to copy. */
+  async listAllOwners(): Promise<string[]> {
+    const rows = all<{ owner_id: string }>(
+      this.db,
+      'SELECT DISTINCT owner_id FROM investigations ORDER BY owner_id',
+    )
+    return rows.map((row) => row.owner_id)
+  }
 }
 
 class SqliteEvidenceRepository implements EvidenceRepository {
@@ -789,12 +798,14 @@ class SqliteResearchQueryRepository implements ResearchQueryRepository {
 class SqliteSettingsRepository implements SettingsRepository {
   constructor(private readonly db: Database) {}
 
-  async get(key: string): Promise<string | null> {
+  // `ownerId` is part of the port for adapters that scope settings per user;
+  // this adapter keys by `key` alone, so it is accepted and ignored.
+  async get(key: string, _ownerId?: string): Promise<string | null> {
     const row = get<{ value: string }>(this.db, 'SELECT value FROM app_settings WHERE key = ?', [key])
     return row?.value ?? null
   }
 
-  async set(key: string, value: string): Promise<void> {
+  async set(key: string, value: string, _ownerId?: string): Promise<void> {
     run(
       this.db,
       `INSERT INTO app_settings (key, value) VALUES (?, ?)

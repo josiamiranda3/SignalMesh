@@ -6,6 +6,7 @@ import '@fontsource-variable/jetbrains-mono'
 import './styles.css'
 
 import { AuthProvider, useAuth } from './app/AuthProvider'
+import { PlatformProviders } from './app/PlatformProviders'
 import AppShell from './components/layout/AppShell'
 import LandingPage from './pages/LandingPage'
 import LoginPage from './pages/LoginPage'
@@ -45,34 +46,36 @@ function RequireAuth({ children }: { children: React.ReactNode }) {
 
 function App() {
   return (
-    <AuthProvider>
-      <Routes>
-        <Route path="/" element={<LandingPage />} />
-        <Route path="/login" element={<LoginPage />} />
+    <PlatformProviders>
+      <AuthProvider>
+        <Routes>
+          <Route path="/" element={<LandingPage />} />
+          <Route path="/login" element={<LoginPage />} />
 
-        <Route
-          element={
-            <RequireAuth>
-              <AppShell />
-            </RequireAuth>
-          }
-        >
-          <Route path="/dashboard" element={<DashboardPage />} />
-          <Route path="/investigations" element={<InvestigationsPage />} />
-          <Route path="/investigations/new" element={<NewInvestigationPage />} />
-          <Route path="/investigations/:id" element={<InvestigationDetailPage />} />
-          <Route path="/investigations/:id/research" element={<ResearchPage />} />
-          <Route path="/investigations/:id/evidence" element={<EvidencePage />} />
-          <Route path="/investigations/:id/analysis" element={<AnalysisPage />} />
-          <Route path="/investigations/:id/validation" element={<ValidationPage />} />
-          <Route path="/validation" element={<ValidationPage />} />
-          <Route path="/history" element={<HistoryPage />} />
-          <Route path="/settings" element={<SettingsPage />} />
-        </Route>
+          <Route
+            element={
+              <RequireAuth>
+                <AppShell />
+              </RequireAuth>
+            }
+          >
+            <Route path="/dashboard" element={<DashboardPage />} />
+            <Route path="/investigations" element={<InvestigationsPage />} />
+            <Route path="/investigations/new" element={<NewInvestigationPage />} />
+            <Route path="/investigations/:id" element={<InvestigationDetailPage />} />
+            <Route path="/investigations/:id/research" element={<ResearchPage />} />
+            <Route path="/investigations/:id/evidence" element={<EvidencePage />} />
+            <Route path="/investigations/:id/analysis" element={<AnalysisPage />} />
+            <Route path="/investigations/:id/validation" element={<ValidationPage />} />
+            <Route path="/validation" element={<ValidationPage />} />
+            <Route path="/history" element={<HistoryPage />} />
+            <Route path="/settings" element={<SettingsPage />} />
+          </Route>
 
-        <Route path="*" element={<NotFoundPage />} />
-      </Routes>
-    </AuthProvider>
+          <Route path="*" element={<NotFoundPage />} />
+        </Routes>
+      </AuthProvider>
+    </PlatformProviders>
   )
 }
 

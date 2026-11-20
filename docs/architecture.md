@@ -1,263 +1,303 @@
 # Arquitetura
 
 Este documento explica **por que** o SignalMesh está estruturado assim, não apenas como.
-Cada decisão abaixo tem uma consequência verificável no código e nos testes.
+A versão 0.2 migrou o runtime para o Cloudflare Worker/DeepSpace preservando a lógica de
+negócio; o que mudou e o que deliberadamente não mudou está em
+[docs/decisions.md](decisions.md).
 
 ---
 
-## 1. Visão geral
-
-O sistema tem três camadas de execução e duas fronteiras de confiança.
+## 1. Dois runtimes, uma aplicação
 
 ```
-Navegador ──(1)──► Servidor Hono ──(2)──► Provedores externos
-    ▲                    │
-    └──(3)── SQLite ◄────┘
+┌──────────────────────────────┐        ┌──────────────────────────────┐
+│  PRODUÇÃO — Cloudflare Worker│        │  LOCAL/TESTE — Node          │
+│  worker.ts                   │        │  server/dev.ts               │
+│    · DeepSpace Auth (JWT)    │        │    · sessão local            │
+│    · Records (Durable Object)│        │    · SQLite (node:sqlite)    │
+│    · Exa + Gemini            │        │    · Exa + Gemini            │
+└───────────────┬──────────────┘        └───────────────┬──────────────┘
+                │                                        │
+                └───────────► server/app.ts ◄────────────┘
+                        (Hono, plataforma-neutro)
+                                     │
+                          server/services/index.ts
+                          (regras de negócio puras)
+                                     │
+                      server/repositories/ports.ts
+                       ┌─────────────┴─────────────┐
+                       │                           │
+              records/repositories.ts      sqlite.ts
+              (Durable Object)             (node:sqlite)
 ```
+
+O que os dois runtimes **compartilham**: rotas, validação, autorização, regras de negócio,
+integrações, formato de erro, contrato de resposta. O que **difere**: quem resolve a
+identidade e onde os dados moram.
+
+**Por que essa é a decisão central:** portar a aplicação não podia significar reescrever a
+regra de negócio. A fronteira em `ports.ts` e o resolvedor de identidade em
+`lib/auth-resolver.ts` são os dois únicos pontos que conhecem a plataforma. A suíte de
+paridade (`tests/integration/adapter-parity.test.ts`) executa o mesmo cenário nos dois
+adaptadores e compara o resultado observável.
+
+---
+
+## 2. Fronteiras de confiança
 
 | Fronteira | O que cruza | Como é controlado |
 | --- | --- | --- |
-| (1) | JSON, cookie de sessão | Validação zod, CSRF, verificação de posse |
-| (2) | Consulta e evidências | Interruptores de custo, cotas, chaves só no servidor |
-| (3) | Dados persistidos | Queries parametrizadas, isolamento por `owner_id` |
+| Navegador → Worker | JSON + JWT | `verifyJwt`, CSRF, validação zod, posse |
+| Worker → RecordRoom | operações de tools | identidade no header; RBAC do DO |
+| Worker → provedores | consulta e evidências | interruptores de custo, cotas, sem retry |
+| Fontes externas → análise | texto de página | delimitado como dado não confiável |
 
-O navegador **nunca** é a autoridade de nada: nem de sessão, nem de cota, nem de
-permissão. Ele é uma superfície de apresentação e de intenção.
-
----
-
-## 2. As quatro camadas do servidor
-
-### 2.1 HTTP (`server/http/`)
-
-Responsabilidade única: traduzir HTTP em chamadas de serviço.
-
-- `middleware.ts` — anexa serviços ao contexto, aplica CSRF, resolve a sessão.
-- `auth-routes.ts` — login, logout, `/me`, configuração do adaptador.
-- `api-routes.ts` — todos os endpoints de negócio.
-
-Nenhuma regra de negócio vive aqui. Um handler típico são seis linhas: parse do corpo com
-schema, chamada ao serviço, envelope de resposta.
-
-**Por que:** sem isso, a mesma regra acaba duplicada entre a rota e o serviço, e a
-divergência só aparece em produção — quando o cliente e o servidor discordam sobre o que é
-válido.
-
-### 2.2 Serviços (`server/services/`)
-
-Onde a regra de negócio mora. Não conhecem HTTP, não conhecem SQL.
-
-| Serviço | Responsabilidade | Invariante que protege |
-| --- | --- | --- |
-| `investigations` | Ciclo de vida e posse | `requireOwned` antes de qualquer leitura/escrita |
-| `evidence` | Armazenamento e priorização | URL normalizada impede duplicata |
-| `research` | Orquestração da Exa | reserva → chamada → settlement → atividade |
-| `analysis` | Orquestração do Gemini | referências validadas antes de persistir |
-| `validation` | Decisão humana | toda mudança é um evento novo |
-| `activity` | Trilha de auditoria | registro persistido, nunca em memória |
-| `usage` | Proteção de custo | cota checada no backend, sempre |
-| `dashboard` | Agregação | números derivados de linhas reais |
-| `export` | Serialização | apenas dados do chamador |
-
-**Por que uma classe por serviço:** cada um tem uma invariante única. Misturar
-"autorização" com "montagem de CSV" produz um módulo onde é impossível provar que a
-autorização aconteceu antes da leitura.
-
-### 2.3 Repositórios (`server/repositories/`)
-
-`ports.ts` declara interfaces. `sqlite.ts` implementa.
-
-Nenhum serviço importa `sqlite.ts`; todos importam `ports.ts`. Isso é verificado pelos
-testes de integração, que constroem o app com um banco em memória e exercitam a mesma
-API pública.
-
-**Por que:** o requisito explícito é poder trocar DeepSpace Records (ou outro banco) sem
-reescrever regra de negócio. Com portas, isso é um novo arquivo, não um refactor.
-
-### 2.4 Integrações (`server/integrations/`)
-
-`exa.ts` e `gemini.ts` são os únicos módulos que fazem chamadas externas.
-
-Cada um:
-- valida que está utilizável (`assertUsable`) antes de tocar a rede;
-- usa `AbortController` com timeout explícito;
-- mapeia **cada** status documentado do provedor para um erro tipado;
-- **nunca** repete automaticamente.
-
-**Por que nenhum retry:** um retry automático em uma API cobrada por requisição é uma
-cobrança que o usuário não autorizou. A repetição é uma ação explícita na interface.
+O navegador **nunca** é autoridade: nem de sessão, nem de cota, nem de permissão. O Worker
+decide identidade; o Durable Object reforça a posse; o serviço confere antes de cada
+operação.
 
 ---
 
-## 3. Contrato compartilhado (`shared/`)
+## 3. Camadas
 
-Cliente e servidor importam os mesmos tipos e os mesmos schemas zod.
+### 3.1 `worker.ts` — assembly
+
+Só montagem: manifesto de Durable Objects, export da classe `AppRecordRoom`, ponte entre
+`env` e configuração, serviço de assets. Nenhuma regra de negócio.
+
+O Worker constrói os serviços **por requisição**, porque o transporte de dados carrega a
+identidade do chamador. Nada é compartilhado entre requisições, então não existe "usuário
+ambiente" que possa vazar de uma chamada para a próxima.
+
+### 3.2 `server/app.ts` — aplicação Hono
+
+Plataforma-neutra: recebe serviços já montados e registra rotas, CSRF, handler de erro e
+404. É o mesmo objeto nos dois runtimes.
+
+### 3.3 `server/services/` — regras de negócio
+
+Não conhecem HTTP nem SQL. Nove serviços, cada um com uma invariante:
+
+| Serviço | Invariante |
+| --- | --- |
+| `investigations` | `requireOwned` antes de qualquer acesso |
+| `evidence` | URL normalizada impede duplicata |
+| `research` | reserva → chamada → settlement → atividade |
+| `analysis` | referências validadas contra o conjunto real |
+| `validation` | toda mudança é um evento novo |
+| `activity` | trilha persistida, nunca em memória |
+| `usage` | cota verificada no backend, sempre |
+| `dashboard` | números derivados de linhas reais |
+| `export` | apenas dados do chamador |
+
+### 3.4 `server/repositories/` — persistência
+
+`ports.ts` declara as interfaces. Dois adaptadores as implementam:
+
+- `sqlite.ts` — o runtime local, e a referência de comportamento.
+- `records/repositories.ts` — DeepSpace Records, via o endpoint de tools do Durable Object.
+
+Nenhum serviço importa um adaptador concreto.
+
+### 3.5 `server/integrations/` — provedores
+
+Únicos módulos que fazem chamadas externas. Cada um valida que está utilizável antes de
+tocar a rede, usa timeout explícito, mapeia cada status documentado e **nunca** repete uma
+chamada automaticamente.
+
+---
+
+## 4. Identidade
+
+`server/lib/auth-resolver.ts` é o único lugar que responde "quem está chamando?".
+
+### 4.1 Modo DeepSpace (produção e `deepspace dev start`)
+
+1. Lê o token do header `Authorization: Bearer` (o que o SDK anexa) ou, na ausência dele,
+   do cookie de sessão da plataforma.
+2. Verifica com `verifyJwt` do `deepspace/worker`, usando `AUTH_JWT_PUBLIC_KEY` e
+   `AUTH_JWT_ISSUER` — material injetado pela plataforma, nunca um segredo compartilhado.
+3. Deriva o `UserRecord` das claims verificadas, preferindo a linha `users` quando existe.
+
+A aplicação **não emite, assina, renova ou armazena** JWT. Não há segredo que possa ser
+usado para forjar um.
+
+### 4.2 Modo local (exclusivo de teste)
+
+Sessão opaca gravada em SQLite, hash SHA-256 apenas. Recusado por
+`assertProductionSafety` quando o runtime é o Worker ou quando `NODE_ENV=production`.
+
+### 4.3 A fronteira é testada
+
+`tests/integration/auth-deepspace.test.ts` prova, entre outras coisas, que:
+
+- o modo é derivado do runtime, não de uma variável que o cliente controle;
+- sem chave/emissor o resolvedor falha fechado (não confia em header);
+- o modo DeepSpace nunca consulta a sessão local;
+- o modo local ignora um Bearer token;
+- um Worker configurado para o adaptador local não sobe.
+
+---
+
+## 5. Isolamento em duas camadas
+
+O requisito é que um usuário nunca leia nem escreva dados de outro. Isso é garantido duas
+vezes, por mecanismos independentes:
+
+1. **Serviço** — `requireOwned` compara `ownerId` e responde `404` (não `403`, que
+   confirmaria a existência do registro).
+2. **Durable Object** — as collections declaram `ownerField: 'ownerId'` com
+   `read/update/delete: 'own'`. O Worker envia `X-User-Id` **sem** `X-App-Action`, então o
+   DO avalia as `permissions` contra o papel real do chamador e recusa a linha antes de
+   devolvê-la.
+
+A segunda camada existe porque a primeira depende de o código lembrar de chamar
+`requireOwned`. A segunda não depende de nada: é a política da collection aplicada no
+armazenamento.
+
+`tests/integration/records-security.test.ts` exercita o DO diretamente — leitura, escrita,
+exclusão e `deleteWhere` entre dois usuários — sem passar pelos serviços, precisamente para
+provar que a barreira inferior funciona sozinha.
+
+### A única exceção, e por quê
+
+O teto **global** de consumo diário precisa somar o consumo de todos os usuários. Uma
+leitura com escopo de membro não vê linhas de outras contas, por desenho. Em vez de
+afrouxar a política da collection, o Worker usa um transporte administrativo
+(`X-App-Action: true`) para **uma** pergunta:
 
 ```
-shared/
-├── domain.ts      entidades e enums
-├── api.ts         envelope ApiResponse<T> e DTOs
-├── schemas.ts     validação de entrada (usada nos dois lados)
-├── relevance.ts   função pura de priorização
-└── analysis.ts    schema da análise + validação de referências
+createGlobalUsageReader(env, ownerUserId).totalSince(operation, since) → number
 ```
 
-**Por que:** o formulário e o endpoint não podem discordar sobre "o que é um título
-válido". Quando existe uma única definição, essa classe de bug deixa de existir.
-
-Um caso concreto aprendido durante o desenvolvimento: `investigationUpdateSchema` não pode
-ser derivado de `.partial()` sobre um schema com `.default()`, porque o zod injeta os
-defaults em campos ausentes e o PATCH apaga silenciosamente campos que o usuário não
-enviou. Isso está corrigido com um schema base sem defaults e coberto por teste
-(`tests/unit/schemas.test.ts`).
+Ela devolve um número. Nunca lista, lê ou retorna uma linha. É o único consumidor do
+transporte administrativo em todo o backend, e está isolada em
+`server/services/worker.ts`.
 
 ---
 
-## 4. Fluxo: da pergunta à evidência validada
+## 6. Fluxo: da pergunta à evidência validada
 
 ```
 1. Criar investigação
    POST /api/investigations
+   → requireUser (JWT verificado)
    → investigations.create + activity('investigation.created')
 
 2. Pesquisar
    POST /api/investigations/:id/research
-   → requireOwned
+   → requireUser → requireOwned
    → exa.assertUsable        (interruptor + chave)
-   → guarda de duplicata     (janela configurável)
+   → guarda de duplicata
    → usage.reserve           (cota do usuário + global + single-flight)
    → exa.search              (timeout, sem retry)
    → usage.settle            (sucesso ou falha classificada)
    → activity('research.executed')
-   → resposta com contentNotice honesto
 
 3. Adicionar evidências
    POST /api/investigations/:id/evidence/bulk
    → normalização de URL
-   → detecção de duplicata por investigação
+   → detecção de duplicata
    → score de relevância no momento da coleta
-   → activity('evidence.added')
+   → uniqueOn (investigationId, urlNormalized) no Durable Object
 
 4. Analisar
    POST /api/investigations/:id/analyses
    → somente evidências armazenadas e do chamador
-   → prompt com fontes delimitadas como não confiáveis
+   → prompt com fontes delimitadas
    → Gemini com responseSchema
    → validateAnalysisPayload contra o conjunto real de ids
-   → sucesso: analyses(status=completed)
-     falha:    analyses(status=failed) + erro tipado ao chamador
+   → sucesso: analyses(status=completed) · falha: status=failed + erro tipado
 
 5. Validar
    POST /api/evidence/:id/validation
    → justificativa obrigatória em rejected/needs_review
-   → novo registro em validations com previousStatus
-   → espelho de status em evidence para filtragem
+   → novo registro com previousStatus
    → activity('validation.recorded')
 
 6. Exportar
    GET /api/investigations/:id/export?format=json|csv&scope=...
-   → apenas linhas do chamador
+   → somente linhas do chamador
    → activity('export.generated')
 ```
 
-**Ponto crítico:** a etapa 4 nunca confia no modelo. O `responseSchema` reduz a
-probabilidade de erro de formato; a validação de referências garante a propriedade que
-importa. São defesas diferentes para riscos diferentes.
-
 ---
 
-## 5. Fluxo de uma requisição
+## 7. Frontend
+
+### 7.1 Árvore de provedores
 
 ```
-POST /api/investigations/:id/research
-  │
-  ├─ withServices        anexa serviços e requestId
-  ├─ csrfGuard           rejeita sem header ou com origem estranha
-  ├─ requireUser         resolve cookie → usuário real (revalida no banco)
-  ├─ parseBody(zod)      rejeita com detalhes por campo
-  ├─ service             regra de negócio
-  │
-  └─ onError             converte AppError → envelope + status
-                         loga contexto sem credenciais
+PlatformProviders            (só quando o bundle carrega um app id real)
+  DeepSpaceAuthProvider
+    RecordProvider
+      RecordScope(SCOPE_ID, schemas)
+        AuthProvider         (contexto de sessão da aplicação)
+          Routes
 ```
 
-Se algo escapar como exceção não tratada, o cliente recebe `500` com mensagem genérica e
-um `requestId`; o detalhe vai apenas para o log do servidor. Isso é intencional: um stack
-trace no navegador é um mapa do sistema para um atacante.
+`PlatformProviders` monta os provedores do SDK **apenas** quando
+`__DEEPSPACE_APP_ID__` foi injetado pelo `deepspaceBuild()`. No runtime local esse define
+não existe, e abrir um WebSocket para um RecordRoom inexistente seria pior que não abrir.
 
----
+As páginas não falam com o SDK diretamente: `useAuth` (de `src/app/AuthProvider.tsx`)
+expõe `status`, `user`, `mode` e `signOut`, e todos os dados vêm de `/api/*`. Assim uma tela
+não precisa saber qual adaptador está ativo.
 
-## 6. Frontend
-
-### 6.1 Rotas
+### 7.2 Rotas
 
 ```
 /                       landing (estática, sem fetch)
-/login                  autenticação
+/login                  entrada (DeepSpace Auth ou adaptador local)
 /dashboard              visão geral
-/investigations         listagem com busca/filtro/ordenação
+/investigations         listagem
 /investigations/new     criação
-/investigations/:id     detalhe + gerenciamento
-/investigations/:id/research
-/investigations/:id/evidence
-/investigations/:id/analysis
-/investigations/:id/validation
-/validation             fila global de validação
+/investigations/:id     detalhe
+/investigations/:id/{research,evidence,analysis,validation}
+/validation             fila global
 /history                trilha de auditoria
 /settings               provedores, limites, conta
 ```
 
-Todas exceto `/` e `/login` estão dentro de `<RequireAuth>`, que redireciona para
-`/login?next=<destino>` preservando o caminho pretendido.
+Todas exceto `/` e `/login` estão sob `<RequireAuth>`. A proteção real está no servidor: o
+redirecionamento é conveniência.
 
-### 6.2 Estado
+### 7.3 Design system
 
-- **Sessão:** `AuthProvider` — o servidor é a fonte de verdade; um `401` significa
-  deslogado. Nada de usuário em `localStorage`.
-- **Dados remotos:** `useAsync`, que modela `loading`, `error`, `refreshing` e `reload`.
-  Em refetch, mantém os dados anteriores visíveis (a tabela não colapsa em skeleton a cada
-  tecla digitada).
-- **Estado local:** `useState` por tela. Não há store global porque não há estado global
-  real — apenas sessão (contexto) e dados por rota.
-
-**Por que não Redux/Zustand:** adicionar uma store global para dois tipos de estado
-(sessão e dados de rota) cria uma camada de sincronização que precisa ser mantida e
-testada, sem resolver nenhum problema existente.
-
-### 6.3 Design system
-
-Tokens em `src/styles.css` (Tailwind v4 `@theme`):
-
-- superfícies em cinco níveis (`canvas` → `overlay`);
-- quatro níveis de tinta, **todos** acima de 4.5:1 de contraste no fundo mais escuro;
-- três acentos (azul, violeta, ciano) usados com significado, não como decoração;
-- semânticos: sucesso, atenção, erro.
-
-Componentes em `src/components/ui/` são primitivas reais, com estados de foco, erro,
-desabilitado e carregamento. A auditoria automatizada de design (`npm run audit:design`)
-verifica contraste WCAG AA, overflow horizontal, texto cortado, alvos de toque e
-hierarquia em 13 rotas × 3 viewports.
+Tokens em `src/styles.css` (Tailwind v4 `@theme`): cinco níveis de superfície, quatro
+níveis de tinta todos acima de 4.5:1, três acentos com significado. A auditoria
+automatizada (`npm run audit:design`) mede contraste WCAG AA, overflow, texto cortado,
+alvos de toque e hierarquia em 13 rotas × 3 viewports.
 
 ---
 
-## 7. Decisões de execução local
+## 8. Build
 
-O runtime local roda o mesmo `app.ts` que seria montado em um worker. A diferença está
-apenas no bootstrap (`server/dev.ts` serve o build e o Vite faz proxy em desenvolvimento).
+`vite.config.ts` decide o modo pelo `DEEPSPACE_APP_ID` real em `wrangler.toml`:
 
-**Por que:** testar o app real, com middleware e serviços reais, em vez de testar handlers
-isolados. Os testes de integração exercitam cookies, CSRF, streaming e erros exatamente
-como o navegador faria.
+| Modo | Quando | O que produz |
+| --- | --- | --- |
+| Local | id é `__APP_ID__` | só a SPA; dados via `/api/*` |
+| Plataforma | id `app_<ULID>` registrado | SPA + `worker.ts`, com app id injetado |
+
+O plugin `deepspaceBuild()` **recusa** construir com o placeholder, porque a chave de
+RecordRoom no navegador é derivada desse id: publicar um id vazio apontaria o cliente para
+os dados de outro app. Registrar minta o id no servidor e trava a origem do código
+permanentemente — por isso é um passo autorizado, nunca implícito no build.
+
+`SIGNALMESS_REQUIRE_PLATFORM=1` transforma a ausência do id em erro em vez de build local,
+para uso em CI de plataforma.
 
 ---
 
-## 8. O que não existe de propósito
+## 9. O que não existe de propósito
 
 | Ausência | Motivo |
 | --- | --- |
-| Chamada de IA gerenciada pela plataforma | Proibido pela regra de custo do projeto |
-| Proxy pago de pesquisa | Proibido pela regra de custo do projeto |
-| Scraping de páginas | A Exa já fornece conteúdo; scraping ampliaria superfície e custo |
+| IA gerenciada pela plataforma | Regra de custo do projeto |
+| Proxy pago de pesquisa | Regra de custo do projeto |
+| JWT emitido pela aplicação | A identidade é da plataforma |
+| Servidor OAuth próprio | Idem |
 | Retry automático em provedor | Cada tentativa pode ser cobrada |
-| Compartilhamento entre usuários | Não especificado, e implementá-lo sem requisito de permissão seria um risco de privacidade |
-| Editor rich-text | O produto é sobre integridade de evidência, não formatação |
+| SQLite no Worker | Não existe sistema de arquivos; Records é o armazenamento |
+| Compartilhamento entre usuários | Não especificado; implementá-lo sem modelo de permissão seria risco |

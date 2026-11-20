@@ -36,3 +36,10 @@ tests/e2e/artifacts/
 .wrangler/
 .wrangler-*/
 skills-lock.json.bak
+
+# DeepSpace / Wrangler local state
+.wrangler-verify/
+.wrangler-smoke/
+.wrangler/
+_ds-inspect/
+tests/worker/artifacts/

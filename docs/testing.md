@@ -9,230 +9,227 @@ Estratégia, o que cada suíte garante e os resultados reais obtidos neste ambie
 ```bash
 npm run typecheck       # tsc cliente + servidor
 npm run lint            # eslint (zero avisos)
-npm run test            # 134 testes (unit + integração)
+npm run test            # 224 testes (unit + integração)
 npm run test:unit       # 70 testes
-npm run test:integration # 64 testes
-npm run test:e2e        # 56 verificações do fluxo principal
+npm run test:integration # 154 testes
+npm run test:e2e        # 56 verificações em navegador real
 npm run test:flows      # 22 verificações de fluxos complementares
 npm run audit:design    # auditoria de design em 3 viewports
+npm run test:worker     # empacotamento do Worker (+ execução ao vivo quando possível)
 npm run verify          # typecheck + lint + build + test
-npm run verify:all      # verify + e2e + audit
+npm run verify:all      # verify + e2e + flows + audit + worker
 ```
 
-Os testes de navegador exigem Chrome ou Edge instalado. Defina `CHROME_PATH` se estiver
-em um local não padrão.
+Os testes de navegador exigem Chrome ou Edge. Defina `CHROME_PATH` se necessário.
 
 ---
 
-## 2. Por que `node:test` e CDP em vez de Vitest/Playwright
+## 2. Por que `node:test` e CDP
 
-**Contexto do ambiente.** O sandbox de execução bloqueia scripts de pós-instalação e
-processos que capturem stdio por pipe. Isso impediu:
+O sandbox de execução bloqueia scripts de pós-instalação e processos que capturem stdio por
+pipe. Isso impediu `vitest` (binário com postinstall) e `playwright` (download de
+navegadores).
 
-- `vitest`, que depende de um binário que requer script de instalação;
-- `playwright`, que requer download de navegadores.
-
-**Solução.** `node:test` roda TypeScript nativamente via `--experimental-transform-types`,
-sem bundler e sem binário. O navegador é o Chrome/Edge já instalado, controlado por
-Chrome DevTools Protocol sobre WebSocket.
-
-**Consequência.** Os testes exercitam o app real (Hono + middleware + serviços + SQLite +
-React no navegador), não mocks de framework. É mais próximo de produção do que uma suíte
-Playwright equivalente, embora com uma API de driver menor.
+`node:test` roda TypeScript nativamente via `--experimental-transform-types`; o navegador é
+o Chrome/Edge já instalado, controlado por Chrome DevTools Protocol. Os testes exercitam o
+app real (Hono + middleware + serviços + persistência + React), não mocks de framework.
 
 ---
 
 ## 3. Testes unitários — 70
 
-### 3.1 `tests/unit/relevance.test.ts` — 12 testes
-
-Garante as propriedades prometidas do índice de priorização:
-
-- resultado sempre em `[0,1]`;
-- cada componente avaliado tem justificativa textual;
-- fonte sem data → `recency = null` e aparece em `missing`;
-- fonte recente pontua mais que fonte antiga em atualidade;
-- data futura não é tratada como "frescor máximo";
-- domínio institucional supera plataforma de conteúdo gerado por usuário;
-- **marca famosa sem conteúdo e sem data não recebe qualidade alta**;
-- pesos customizados são respeitados;
-- índice parcial é renormalizado e declara isso;
-- determinismo com clock fixo.
-
-### 3.2 `tests/unit/analysis-contract.test.ts` — 12 testes
-
-O contrato que sustenta a promessa central do produto:
-
-- payload válido citando evidências reais é aceito;
-- descoberta citando id inexistente é rejeitada;
-- contradição citando id inexistente é rejeitada;
-- `citedEvidenceIds` com id não enviado é rejeitado;
-- descoberta sem nenhuma evidência é rejeitada;
-- payload sem resumo executivo é rejeitado;
-- confiança fora do enum é rejeitada;
-- texto livre do modelo é rejeitado;
-- citações são coletadas de descobertas **e** contradições;
-- `insufficientEvidence` funciona sem inventar descobertas;
-- o schema do Gemini declara os mesmos campos obrigatórios do contrato zod;
-- o prompt inclui o objetivo, delimita fontes com `<fonte>`, proíbe inventar ids, proíbe
-  escolher arbitrariamente entre contradições e **não contém credenciais**.
-
-### 3.3 `tests/unit/sanitize.test.ts` — 20 testes
-
-- normalização de URL: remove `utm_*`/`gclid`/fragmento/barra final, preserva query
-  significativa, distingue `http` de `https` e caminhos diferentes;
-- `isSafeHttpUrl` rejeita `javascript:`, `data:`, `file:`, `vbscript:`, `ftp:`;
-- `stripHtml` remove `script`/`style` e decodifica entidades;
-- extração de domínio, truncamento e janela de meia-noite UTC.
-
-### 3.4 `tests/unit/schemas.test.ts` — 26 testes
-
-- **regressão crítica:** um PATCH parcial não injeta defaults (o bug que apagava campos);
-- cada campo pode ser atualizado isoladamente;
-- update vazio é rejeitado;
-- status inválido é rejeitado;
-- trim de whitespace;
-- defaults de criação são os documentados;
-- mínimo de objetivo e máximo de título;
-- evidence rejeita URLs não-http e `publishedAt` sem offset;
-- research limita `numResults` a 20;
-- validação aceita os quatro status e rejeita desconhecido;
-- paginação coage de string e rejeita fora do intervalo;
-- analysis rejeita subset com mais de 60 ids;
-- export rejeita formato não suportado.
+| Arquivo | Testes | Cobre |
+| --- | --- | --- |
+| `relevance.test.ts` | 12 | índice em [0,1]; justificativa por componente; ausência de data; data futura; domínio institucional vs UGC; marca famosa sem conteúdo não pontua alto; pesos; renormalização; determinismo |
+| `analysis-contract.test.ts` | 12 | referência inexistente rejeitada; `citedEvidenceIds` inválido; finding sem fonte; payload incompleto; enum de confiança; texto livre; coleta de citações; `insufficientEvidence`; schema do Gemini; prompt sem credenciais |
+| `sanitize.test.ts` | 20 | normalização de URL; rejeição de `javascript:`/`data:`/`file:`; `stripHtml`; domínio; excerpt; janela de meia-noite |
+| `schemas.test.ts` | 26 | PATCH parcial sem injeção de default; limites; defaults de criação; URL perigosa; paginação; status inválido |
 
 ---
 
-## 4. Testes de integração — 64
+## 4. Testes de integração — 154
 
-Sobem a aplicação real com banco em memória e um servidor mock que fala os formatos
-documentados da Exa e do Gemini. Exercitam HTTP, cookies, CSRF, middleware e serviços.
+### 4.1 `auth-isolation.test.ts` — 19
 
-### 4.1 `auth-isolation.test.ts` — 19 testes
+Autenticação, CSRF/origem, isolamento entre dois usuários via HTTP, integridade da validação
+(justificativa obrigatória, histórico com `previousStatus`, status repetido recusado).
 
-| Grupo | Casos |
-| --- | --- |
-| autenticação | 401 em 4 rotas; cookie emitido; e-mail inválido com detalhes; logout revoga; cookie forjado rejeitado |
-| CSRF/origem | sem header → 403; origem estranha → 403 |
-| isolamento | leitura, update, delete, export, research e listagem entre dois usuários → 404/0; **nenhuma chamada ao provedor** na tentativa alheia; evidência e validação alheias → 404 |
-| validação | justificativa obrigatória em rejeição e revisão; aprovação sem justificativa; histórico preserva 3 decisões com `previousStatus`; status repetido rejeitado |
+### 4.2 `providers-and-quota.test.ts` — 28
 
-### 4.2 `providers-and-quota.test.ts` — 28 testes
+Exa (consulta montada, proveniência, vazio, 401/429/500/JSON inválido/timeout, duplicata),
+evidências (persistência, deduplicação, skip com motivo, URL perigosa), Gemini (análise
+válida, **referência fabricada rejeitada e registrada como failed**, schema inválido, recusa
+sem evidências, 403/429/503, truncamento) e proteção de custo (cotas, snapshot, bloqueio
+global, chave ausente, registro de bloqueios).
 
-| Grupo | Casos |
-| --- | --- |
-| Exa | consulta montada do tema/objetivo; proveniência e disponibilidade; resultado vazio honesto; 401, 429, 500, JSON inválido, timeout; registro de falha; guarda de duplicata; repetição explícita |
-| evidências | persistência com breakdown; duplicata por URL normalizada; skip em lote com motivo; URL perigosa rejeitada; marcação `alreadyAdded` ao repetir |
-| Gemini | análise válida com referências reais; **referência fabricada rejeitada e registrada como failed**; schema inválido; recusa sem evidências; 403/429/503; truncamento rejeitado |
-| custo | limite por usuário (research e analysis); snapshot de cota com reset; bloqueio global; chave ausente; registro de bloqueios |
+### 4.3 `crud-export.test.ts` — 17
 
-### 4.3 `crud-export.test.ts` — 17 testes
+CRUD completo, cascata, dashboard derivado de dados, histórico persistido, export JSON com
+relações íntegras, CSV parseável, nome de arquivo, `no-store`, ausência de credenciais.
 
-| Grupo | Casos |
-| --- | --- |
-| CRUD | criar/ler/atualizar/arquivar; criação sem objetivo rejeitada; exclusão em cascata; filtro por status; busca por título; ordenação asc; parâmetro inválido rejeitado |
-| dashboard | totais reais; soma por status = total; séries de 30 dias com zeros; tendência de investigações = total |
-| histórico | ciclo completo registrado; persistência visível em nova sessão; feed global com total |
-| export | JSON com relações íntegras (toda referência existe no pacote); escopo respeitado; CSV parseável com contagem de colunas consistente; nome de arquivo legível; `cache-control: no-store`; **sem credenciais/sessão**; evento registrado |
-| settings | estado dos provedores sem expor chaves |
+### 4.4 `adapter-parity.test.ts` — 36 (novo na fase 2)
+
+Executa os mesmos cenários contra **SQLite** e **DeepSpace Records**, comparando o resultado
+observável:
+
+- criação e leitura com campos idênticos;
+- atualização parcial sem perturbar o resto;
+- listagem com busca, filtro de status e ordenação;
+- contagem por status;
+- evidência com breakdown de relevância intacto;
+- duplicata por URL normalizada;
+- rejeição de segunda evidência com a mesma URL (no armazenamento);
+- atualização de nota e status;
+- ordenação de evidências;
+- contagem por status de validação;
+- histórico de validação append-only;
+- trilha de atividade ordenada, incluindo entrada com `investigationId: null`;
+- soma de consumo apenas de sucessos na janela;
+- consultas de pesquisa por hash;
+- preferências por dono;
+- ocultação de linhas de outro dono;
+- **igualdade ponta a ponta**: o mesmo ciclo de vida produz objetos profundamente iguais nos
+  dois adaptadores;
+- **igualdade de cascata**.
+
+Esta é a suíte que sustenta a afirmação "trocar o banco não muda o comportamento".
+
+### 4.5 `records-security.test.ts` — 26 (novo na fase 2)
+
+Testa o **armazenamento** diretamente, sem passar pelos serviços:
+
+- toda collection de domínio declara `ownerField`;
+- nenhuma concede `read/update/delete: true` a membro;
+- `activity_logs` e `usage_records` são append-only;
+- leitura, leitura por id, atualização e exclusão de outro usuário são recusadas pelo DO;
+- escrita anônima recusada;
+- consulta de evidências com escopo de chamador;
+- consumo de um usuário não conta para outro;
+- campo obrigatório ausente recusado;
+- `maxLength` recusado;
+- `uniqueOn` de evidência e de settings;
+- mesma URL permitida em investigação diferente;
+- JSON e booleano round-trip;
+- paginação com `nextOffset`;
+- `where` com campo desconhecido recusado;
+- `deleteWhere` sem filtro recusado;
+- `deleteWhere` só remove o que o chamador pode excluir;
+- visão de membro vs visão administrativa do consumo.
+
+### 4.6 `auth-deepspace.test.ts` — 21 (novo na fase 2)
+
+Prova a fronteira de autenticação:
+
+- modo derivado do runtime (Node → local; Worker → deepspace; `DEEPSPACE_APP_ID` presente →
+  deepspace);
+- Worker com adaptador local não sobe;
+- `NODE_ENV=production` com adaptador local não sobe;
+- token Bearer verificado com a chave e o emissor corretos;
+- cookie de plataforma quando não há Bearer;
+- Bearer tem precedência sobre cookie;
+- falha de verificação → não autenticado;
+- sem token → não chama o verificador;
+- **bindings ausentes → falha fechada**;
+- modo DeepSpace nunca consulta a sessão local;
+- linha de usuário derivada das claims quando não existe;
+- nome derivado do e-mail quando a claim não traz nome;
+- modo local resolve e rejeita sessão;
+- modo local ignora Bearer.
+
+### 4.7 `migration.test.ts` — 7 (novo na fase 2)
+
+Cópia completa com ids e relações preservados, normalização de URL, idempotência, dry-run sem
+gravação, origem intacta, filtro por dono, relatório legível.
 
 ---
 
 ## 5. Testes de ponta a ponta — 78 verificações
 
-### 5.1 Fluxo principal (`run-e2e.ts`) — 56 verificações
+Executados em navegador real, com provedores mockados.
 
-| Passo | Verificações |
-| --- | --- |
-| 1. Landing e autenticação | marca, proposta, redirect com `next`, login, nome na interface |
-| 2. Estado vazio | empty state elaborado, **nenhum número fictício** |
-| 3. Criação | formulário completo, redirecionamento para detalhe |
-| 4. Pesquisa | resultados reais, domínio, disponibilidade, aviso de conteúdo parcial |
-| 5. Evidências | confirmação, listagem, prioridade, status pendente |
-| 6. Duplicação | resultado marcado "já adicionada", contagem não muda |
-| 7. Análise | resumo, descobertas, contradições, limitações, lacunas, alinhamento, referências, modelo, **nenhuma referência inventada** |
-| 8. Validação | aprovação com feedback; rejeição sem justificativa bloqueada; rejeição com justificativa |
-| 9. Histórico | modal mostra status anterior e justificativa; feed global tem research/analysis/validation |
-| 10. Exportação | formatos e escopos na interface; JSON 200 com content-type, gerador, investigação e evidências; CSV com linhas |
-| 11. Configurações | provedores operacionais, registro de consumo, **nenhuma chave exposta** |
-| 12. Isolamento | segundo usuário recebe `404` e lista vazia |
-| 13. Logout | redireciona e mantém rota protegida fechada |
-| Final | zero erros de runtime, zero erros de console |
-
-### 5.2 Fluxos complementares (`run-flows.ts`) — 22 verificações
-
-Cobre o que o fluxo principal não visita:
-
-| Grupo | Verificações |
-| --- | --- |
-| A. Demo rotulada | investigação `[DEMONSTRAÇÃO]` marcada no dashboard e na listagem |
-| B. Edição e arquivamento | modal edita o título; arquivar reflete; status volta para "em andamento" |
-| C. Evidências | três fontes listadas; ausência de data declarada; nota persistida; filtro sem resultado mostra estado vazio; limpar restaura; busca filtra por título |
-| D. Fila global | mostra pendentes; lista evidências de qualquer investigação; revisão com justificativa aparece na aba correta |
-| E. Busca | investigação inexistente mostra estado próprio; limpar restaura |
-| F. Exclusão | modal avisa irreversibilidade e quantifica o que será removido; redireciona |
-| G. Erros | id inexistente mostra estado claro; zero erros |
+| Suíte | Verificações | Cobre |
+| --- | --- | --- |
+| `run-e2e.ts` | 56 | landing → login → investigação → pesquisa → evidência → análise → validação → histórico → exportação → configurações → isolamento → logout |
+| `run-flows.ts` | 22 | demo rotulada, edição, arquivamento, notas, filtros, busca, fila global, exclusão com confirmação, 404 |
 
 ---
 
-## 6. Auditoria de design
+## 6. Verificação do Worker — 17 (novo na fase 2)
 
-`tests/e2e/design-audit.ts` mede no DOM real, em **13 rotas × 3 viewports** (desktop
-1440px, tablet 834px, mobile 390px):
+`tests/worker/run-worker-smoke.ts` tem duas camadas.
 
-- **contraste WCAG AA** de cada nó de texto contra o fundo composto (considerando
-  transparências);
-- ordem de títulos e distribuição de tamanhos de fonte;
-- overflow horizontal (ignorando contêineres com scroll próprio);
-- texto cortado sem ellipsis;
-- alvos de toque menores que 32px (ignorando links inline em prosa);
-- gutters da página e paddings de card.
+### 6.1 Empacotamento (sempre executa)
 
-### Correções que a auditoria provocou
+Roda `wrangler deploy --dry-run` — o empacotador real da Cloudflare — e inspeciona o
+artefato:
 
-| Problema encontrado | Correção |
-| --- | --- |
-| `ink-faint` (#4a5368) em 2.59:1 | paleta recalculada: `ink-faint` → #818b9f (4.9:1) |
-| `ink-subtle` e `ink-muted` abaixo de AA | elevados para #9aa6bd e #b3bdd1 |
-| texto em 10–11px | mínimo elevado para 12px |
-| seletores de largura fixa estourando no mobile | largura fluida com `sm:` |
-| tabs com overflow no mobile | scroll horizontal contido e padding compensado |
-| botões de 28×26px | 36–40px |
-| checkboxes nativos de 14px | 18px dentro de label com 36px de altura |
-| links inline de 14–18px de altura | `min-h-9` com `inline-flex` |
+- `AppRecordRoom` e `__DO_MANIFEST__` presentes;
+- `verifyJwt` e `createWorkerServices` presentes;
+- protocolo de Records presente;
+- **`@hono/node-server` ausente**;
+- **`node:http` ausente**;
+- **adaptador SQLite, sua fábrica, o esquema e os pragmas ausentes** (tree-shaken);
+- **nenhum import estático de `node:sqlite`** (a única referência é um `await import()`
+  dentro de `try/catch` no próprio SDK, marcado `@vite-ignore`, que nunca executa);
+- nenhum valor de chave embutido;
+- interruptor de custo lido em runtime, não fixado no bundle.
 
-**Resultado final:** `Nenhum problema de design detectado.`
+### 6.2 Execução ao vivo (quando o runtime inicia)
+
+Sobe o Worker em `wrangler dev` e exercita `/api/health` (runtime=worker, storage=records,
+authMode=deepspace), 401 nas rotas privadas, ausência de login local, SPA pelo binding de
+assets, 404 em asset ausente e JSON em rota de API desconhecida.
+
+**Neste ambiente esta camada reporta `SKIPPED`.** O binário `workerd` não inicia: um Worker
+**mínimo de controle** (`export default { fetch: () => new Response('ok') }`) falha com a
+mesma mensagem (`std::terminate` / "The Workers runtime failed to start"), o que isola a
+causa como limitação do ambiente (o sandbox bloqueia subprocessos e escrita de bundles
+temporários) e não como defeito do código. O resultado é registrado em
+`tests/worker/artifacts/worker-verification.txt` e deve ser reexecutado em um ambiente que
+permita ao workerd iniciar.
 
 ---
 
-## 7. Resultados reais
+## 7. Auditoria de design
+
+13 rotas × 3 viewports, medindo no DOM real: contraste WCAG AA com composição de
+transparência, ordem de títulos, distribuição tipográfica, overflow horizontal, texto
+cortado, alvos de toque, gutters e paddings.
+
+Resultado atual: **nenhum problema**.
+
+---
+
+## 8. Resultados reais
 
 Executados neste ambiente (Windows, Node 24.22.0):
 
 ```
-typecheck (cliente)   ✅ sem erros
-typecheck (servidor)  ✅ sem erros
-lint                  ✅ 0 erros, 0 avisos
-build                 ✅ 1707 módulos, 563 kB (162 kB gzip)
-unit + integração     ✅ 134/134
-e2e fluxo principal    ✅ 56/56
-e2e fluxos             ✅ 22/22
-auditoria de design   ✅ 0 problemas em 39 páginas
+typecheck (cliente)     ✅ sem erros
+typecheck (servidor)    ✅ sem erros
+lint                    ✅ 0 erros, 0 avisos
+build (SPA)             ✅ concluído
+unit + integração       ✅ 224/224
+e2e fluxo principal     ✅ 56/56
+e2e fluxos              ✅ 22/22
+auditoria de design     ✅ 0 problemas
+worker (empacotamento)  ✅ 17/17
+worker (workerd ao vivo)⏭ SKIPPED — workerd não inicia no ambiente
 ```
 
 ---
 
-## 8. Limites desta suíte
+## 9. Limites desta suíte
 
 1. **Nenhuma chamada real a provedor.** Por decisão de custo, a integração é exercitada
-   contra um mock fiel ao formato documentado. Um teste real controlado exige chaves e
-   autorização (ver `docs/api-integrations.md` §3.3).
-2. **Rate limiting por minuto não é testado em carga.** A cota diária e o single-flight
-   são; o limite de janela por minuto é verificado apenas por leitura de código.
-3. **Sem teste de concorrência real** com múltiplos processos — o isolamento é testado com
-   duas sessões simultâneas no mesmo processo.
-4. **Sem teste de acessibilidade com leitor de tela.** Contraste, alvos, foco, ARIA e ordem
-   de títulos são verificados; a experiência real com NVDA/VoiceOver não foi exercitada.
-5. **Sem teste visual por diff de pixel.** A auditoria mede propriedades calculadas, não
-   pixels; uma mudança puramente estética não quebra a suíte (por design — isso evita
-   falsos positivos por antialiasing).
+   contra um mock fiel ao formato documentado.
+2. **Nenhuma chamada real à plataforma DeepSpace.** O app não está registrado; nenhuma
+   operação de deploy, push ou billing foi executada.
+3. **O Durable Object é simulado.** `FakeRecordRoom` reproduz o contrato documentado —
+   RBAC, `uniqueOn`, required, `maxLength`, interpretações e paginação — mas não é o binário
+   do SDK. A verificação contra o DO real exige o runtime de plataforma.
+4. **workerd não executou aqui** (ver §6.2).
+5. **Rate limiting por minuto** não é testado em carga.
+6. **Sem teste de acessibilidade com leitor de tela**; contraste, alvos, foco, ARIA e ordem
+   de títulos são verificados.
+7. **Sem diff visual por pixel**; a auditoria mede propriedades calculadas.

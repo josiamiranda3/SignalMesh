@@ -1,0 +1,54 @@
+name = "signalmess"
+compatibility_date = "2025-01-01"
+compatibility_flags = ["nodejs_compat", "assets_navigation_has_no_effect"]
+main = "worker.ts"
+
+[assets]
+directory = "dist"
+binding = "ASSETS"
+# The asset layer serves only what it has. A miss reaches the worker as a real
+# 404, and `worker.ts` decides: the SPA shell for a client route, 404 for a file
+# that no longer exists. Keeping this equal to the deploy value is what makes
+# `deepspace dev start` route like production.
+not_found_handling = "none"
+# API and platform prefixes must reach the worker before the asset layer, or an
+# unmatched /api/* call answers with the SPA shell and a JSON client chokes.
+run_worker_first = ["/api/*", "/ws/*", "/internal/*", "/v1/*", "/_deepspace/*", "/llms.txt", "/llms-full.txt", "/.well-known/mcp", "/.well-known/mcp.json", "/.well-known/mcp/*"]
+
+[vars]
+# Replaced by `npx deepspace app init` on the app's first use. The app is NOT
+# registered yet: see docs/deployment.md for the gate that must be cleared
+# before the first command that claims this id.
+DEEPSPACE_APP_ID = "__APP_ID__"
+APP_NAME = "signalmess"
+NATIVE_AUTH_REDIRECT_URIS = ""
+
+# SignalMesh non-secret configuration.
+# Both cost switches stay OFF. Turning them on requires the owner's explicit
+# authorization, and `ENABLE_PAID_OPERATIONS` additionally requires
+# `ENABLE_EXTERNAL_APIS=true` (enforced at startup).
+ENABLE_EXTERNAL_APIS = "false"
+ENABLE_PAID_OPERATIONS = "false"
+EXA_SEARCH_TYPE = "auto"
+GEMINI_MODEL = "gemini-2.5-flash"
+RESEARCH_DAILY_LIMIT = "3"
+ANALYSIS_DAILY_LIMIT = "3"
+RESEARCH_GLOBAL_DAILY_LIMIT = "30"
+ANALYSIS_GLOBAL_DAILY_LIMIT = "30"
+DUPLICATE_GUARD_SECONDS = "90"
+
+[[migrations]]
+tag = "v1"
+new_sqlite_classes = ["AppRecordRoom"]
+
+[durable_objects]
+bindings = [{ name = "RECORD_ROOMS", class_name = "AppRecordRoom" }]
+
+# --- DeepSpace detected secrets (names only; values live in `npx deepspace secrets`) ---
+#   EXA_API_KEY
+#   GEMINI_API_KEY
+# --- end DeepSpace detected secrets ---
+
+[dev]
+port = 8787
+inspector_port = 9237

@@ -12,7 +12,7 @@ import reactHooks from 'eslint-plugin-react-hooks'
  */
 export default tseslint.config(
   {
-    ignores: ['dist/**', 'node_modules/**', '.data/**', 'tests/e2e/artifacts/**', '*.config.js', '_probe/**', '_probe2/**', '_scaffold/**', '.npm-cache/**'],
+    ignores: ['dist/**', 'node_modules/**', '.data/**', 'tests/e2e/artifacts/**', 'tests/worker/artifacts/**', '*.config.js', '_probe/**', '_probe2/**', '_scaffold/**', '.npm-cache/**', '_ds-inspect/**', '.wrangler*/**', '.wrangler-verify/**', '.wrangler-smoke/**'],
   },
   js.configs.recommended,
   ...tseslint.configs.recommended,

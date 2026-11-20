@@ -215,7 +215,30 @@ e trata `429` como limite do provedor.
 
 ## 3. Configuração
 
-### 3.1 Variáveis
+### 3.1 Onde as chaves vivem
+
+**No Worker (produção):**
+
+```bash
+npx deepspace secrets set EXA_API_KEY=... GEMINI_API_KEY=...
+```
+
+O store é por app e criptografado; o deploy materializa cada valor como binding
+`secret_text`. As chaves **não** aparecem no bundle — `npm run test:worker` verifica isso
+inspecionando o artefato.
+
+Os interruptores de custo **não são segredos** e ficam em `[vars]` no `wrangler.toml`:
+
+```toml
+[vars]
+ENABLE_EXTERNAL_APIS = "false"
+ENABLE_PAID_OPERATIONS = "false"
+```
+
+O bundle lê esses valores em runtime (também verificado), então mudá-los exige editar a
+configuração e republicar — não alterar um arquivo local.
+
+**No runtime Node (local/testes):** `.env`, gitignored, lido por `server/lib/env.ts`.
 
 ```bash
 ENABLE_EXTERNAL_APIS=true
@@ -233,6 +256,9 @@ GEMINI_TIMEOUT_MS=45000
 GEMINI_MAX_OUTPUT_TOKENS=4096
 GEMINI_TEMPERATURE=0.2
 ```
+
+**Chamadas saem exclusivamente do Worker** (ou do runtime Node, em testes). O navegador nunca
+fala com Exa ou Gemini: não há chave, nem proxy, nem CORS para provedor no cliente.
 
 ### 3.2 Verificação sem gastar cota
 

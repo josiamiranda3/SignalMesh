@@ -10,10 +10,16 @@ import { APP_TAGLINE } from '@/app/constants'
 /**
  * Sign-in.
  *
- * In this local build the authentication adapter is the local one (DeepSpace
- * Auth is the production mechanism, wired in the worker adapter). The screen
- * says so plainly rather than pretending to offer social login it cannot
- * perform, and it preserves the intended destination through `?next=`.
+ * The screen renders whichever identity surface the runtime actually has:
+ *
+ *  - `deepspace`: the platform's own sign-in (`AuthOverlay` from the SDK). The
+ *    app never sees a credential — the overlay drives the platform's auth
+ *    worker, and the resulting session arrives as a verified JWT.
+ *  - `local`: an email field, for the development/test adapter only.
+ *
+ * The `?next=` destination is preserved in both cases and sanitised to a
+ * same-origin relative path, so the screen cannot be turned into an open
+ * redirect.
  */
 export default function LoginPage() {
   return (
@@ -24,7 +30,7 @@ export default function LoginPage() {
 }
 
 function LoginScreen() {
-  const { status, user, signIn } = useAuth()
+  const { status, user, mode, signIn, refresh } = useAuth()
   const navigate = useNavigate()
   const [params] = useSearchParams()
   const next = sanitizeNext(params.get('next'))
@@ -101,7 +107,7 @@ function LoginScreen() {
         </p>
       </div>
 
-      {/* Right: form */}
+      {/* Right: sign-in surface */}
       <div className="flex items-center justify-center px-6 py-12">
         <div className="w-full max-w-sm">
           <div className="mb-8 flex items-center gap-2.5 lg:hidden">
@@ -114,52 +120,73 @@ function LoginScreen() {
             Identifique-se para acessar suas investigações.
           </p>
 
-          <form onSubmit={onSubmit} className="mt-7 space-y-4" noValidate>
-            {error ? <Notice tone="danger">{error}</Notice> : null}
+          {mode === 'deepspace' ? (
+            <DeepSpaceSignIn onSignedIn={() => void refresh()} />
+          ) : (
+            <form onSubmit={onSubmit} className="mt-7 space-y-4" noValidate>
+              {error ? <Notice tone="danger">{error}</Notice> : null}
 
-            <Field label="E-mail" error={fields['email']} hint="Usado apenas para identificar sua conta neste ambiente.">
-              <div className="relative">
-                <Mail className="pointer-events-none absolute left-3 top-1/2 size-3.5 -translate-y-1/2 text-ink-faint" aria-hidden />
-                <Input
-                  type="email"
-                  name="email"
-                  autoComplete="email"
-                  required
-                  autoFocus
-                  placeholder="voce@exemplo.com"
-                  className="pl-9"
-                  value={email}
-                  invalid={Boolean(fields['email'])}
-                  onChange={(event) => setEmail(event.target.value)}
-                />
-              </div>
-            </Field>
+              <Field
+                label="E-mail"
+                error={fields['email']}
+                hint="Usado apenas para identificar sua conta neste ambiente."
+              >
+                <div className="relative">
+                  <Mail
+                    className="pointer-events-none absolute left-3 top-1/2 size-3.5 -translate-y-1/2 text-ink-faint"
+                    aria-hidden
+                  />
+                  <Input
+                    type="email"
+                    name="email"
+                    autoComplete="email"
+                    required
+                    autoFocus
+                    placeholder="voce@exemplo.com"
+                    className="pl-9"
+                    value={email}
+                    invalid={Boolean(fields['email'])}
+                    onChange={(event) => setEmail(event.target.value)}
+                  />
+                </div>
+              </Field>
 
-            <Field label="Nome de exibição" optional error={fields['name']} hint="Se vazio, derivamos do e-mail.">
-              <div className="relative">
-                <User className="pointer-events-none absolute left-3 top-1/2 size-3.5 -translate-y-1/2 text-ink-faint" aria-hidden />
-                <Input
-                  type="text"
-                  name="name"
-                  autoComplete="name"
-                  placeholder="Como você quer ser chamado"
-                  className="pl-9"
-                  value={name}
-                  onChange={(event) => setName(event.target.value)}
-                />
-              </div>
-            </Field>
+              <Field label="Nome de exibição" optional error={fields['name']} hint="Se vazio, derivamos do e-mail.">
+                <div className="relative">
+                  <User
+                    className="pointer-events-none absolute left-3 top-1/2 size-3.5 -translate-y-1/2 text-ink-faint"
+                    aria-hidden
+                  />
+                  <Input
+                    type="text"
+                    name="name"
+                    autoComplete="name"
+                    placeholder="Como você quer ser chamado"
+                    className="pl-9"
+                    value={name}
+                    onChange={(event) => setName(event.target.value)}
+                  />
+                </div>
+              </Field>
 
-            <Button type="submit" variant="primary" size="lg" className="w-full justify-center" loading={submitting}>
-              {submitting ? 'Entrando…' : 'Entrar'}
-            </Button>
-          </form>
+              <Button type="submit" variant="primary" size="lg" className="w-full justify-center" loading={submitting}>
+                {submitting ? 'Entrando…' : 'Entrar'}
+              </Button>
+            </form>
+          )}
 
           <div className="mt-6">
-            <Notice tone="info" title="Autenticação deste ambiente">
-              Este build local usa um adaptador de sessão próprio para permitir testes completos sem
-              depender de um provedor externo. Em produção, a autenticação é feita pelo DeepSpace Auth.
-            </Notice>
+            {mode === 'deepspace' ? (
+              <Notice tone="info" title="Autenticação DeepSpace">
+                A identidade é verificada pela plataforma e chega ao servidor como um JWT assinado. O
+                SignalMesh não emite, não assina e não armazena credenciais.
+              </Notice>
+            ) : (
+              <Notice tone="info" title="Autenticação deste ambiente">
+                Este ambiente usa um adaptador de sessão local, destinado a desenvolvimento e testes. Em
+                produção a autenticação é feita pelo DeepSpace Auth.
+              </Notice>
+            )}
           </div>
 
           <p className="mt-6 text-center text-[0.75rem] text-ink-faint">
@@ -169,6 +196,63 @@ function LoginScreen() {
           </p>
         </div>
       </div>
+    </div>
+  )
+}
+
+/**
+ * Platform sign-in.
+ *
+ * Renders the SDK's own overlay. The component is imported lazily so the local
+ * Node build — which never authenticates this way — does not pay for it, and so
+ * a missing provider configuration degrades to a clear message rather than a
+ * blank screen.
+ */
+function DeepSpaceSignIn({ onSignedIn }: { onSignedIn: () => void }) {
+  const [Overlay, setOverlay] = useState<React.ComponentType<{ onClose?: () => void }> | null>(null)
+  const [loadError, setLoadError] = useState<string | null>(null)
+
+  useEffect(() => {
+    let active = true
+    import('deepspace')
+      .then((mod) => {
+        if (!active) return
+        // `AuthOverlay` is the SDK's own sign-in surface; it drives the platform
+        // auth worker. The app supplies presentation only.
+        setOverlay(() => mod.AuthOverlay as unknown as React.ComponentType<{ onClose?: () => void }>)
+      })
+      .catch(() => {
+        if (active) setLoadError('Não foi possível carregar a interface de autenticação da plataforma.')
+      })
+    return () => {
+      active = false
+    }
+  }, [])
+
+  // The overlay reports completion by closing; re-read the session afterwards
+  // so the provider picks up the new identity from the server.
+  const handleClose = () => onSignedIn()
+
+  if (loadError) {
+    return (
+      <div className="mt-7">
+        <Notice tone="danger" title="Autenticação indisponível">
+          {loadError}
+        </Notice>
+      </div>
+    )
+  }
+
+  return (
+    <div className="mt-7">
+      {Overlay ? (
+        <Overlay onClose={handleClose} />
+      ) : (
+        <div className="flex flex-col items-center gap-3 rounded-lg border border-hairline bg-surface/60 px-6 py-10">
+          <div className="size-6 animate-spin rounded-full border-2 border-hairline-strong border-t-signal" aria-hidden />
+          <p className="text-[0.8125rem] text-ink-subtle">Carregando autenticação da plataforma…</p>
+        </div>
+      )}
     </div>
   )
 }

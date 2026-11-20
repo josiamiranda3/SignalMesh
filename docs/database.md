@@ -1,17 +1,21 @@
 # Banco de dados
 
-Persistência local em **SQLite** através do módulo nativo `node:sqlite` do Node 24 (sem
-dependência compilada, sem binário externo).
+Duas implementações, um modelo.
 
-O esquema é aplicado de forma idempotente na inicialização (`server/db.ts`), com
-`PRAGMA journal_mode = WAL` e `PRAGMA foreign_keys = ON`.
+| Runtime | Armazenamento | Arquivo |
+| --- | --- | --- |
+| Worker (produção) | DeepSpace Records — SQLite dentro de um Durable Object | `src/schemas.ts` + `server/repositories/records/` |
+| Node (local/testes) | SQLite via `node:sqlite` | `server/db.ts` + `server/repositories/sqlite.ts` |
+
+A modelagem é a mesma nos dois. Nomes de collection, nomes de campo, tipos e relações são
+idênticos; a diferença é *como* cada um expressa a mesma restrição.
 
 ---
 
-## 1. Modelo relacional
+## 1. Modelo
 
 ```
-users ──┬── sessions
+users ──┬── sessions (só SQLite)
         │
         ├── investigations ──┬── evidence ──┬── validations
         │                    │              │
@@ -21,269 +25,207 @@ users ──┬── sessions
         │                    └── research_queries
         │
         ├── activity_logs
-        └── usage_records
+        ├── usage_records
+        └── app_settings
 ```
 
-Todas as chaves estrangeiras usam `ON DELETE CASCADE` a partir de `investigations` e
-`users`, exceto `activity_logs.investigation_id`, que aceita `NULL` para preservar o
-evento de exclusão.
+---
+
+## 2. Equivalência de restrições
+
+| Restrição | SQLite | DeepSpace Records |
+| --- | --- | --- |
+| Isolamento por dono | `WHERE owner_id = ?` no repositório | `ownerField: 'ownerId'` + `read/update/delete: 'own'` avaliados no DO |
+| Unicidade de fonte | `UNIQUE (investigation_id, url_normalized)` | `uniqueOn: ['investigationId', 'urlNormalized']` |
+| Criação obrigatória | `NOT NULL` | `required: true` na coluna |
+| Limite de texto | validado no zod | `maxLength` na coluna |
+| JSON | `TEXT` + stringify manual | `{ kind: 'json' }` (serializa sozinho) |
+| Booleano | `INTEGER` 0/1 | `storage: 'number'` + `{ kind: 'boolean' }` |
+| Exclusão em cascata | `ON DELETE CASCADE` | deleção explícita nos serviços (não há FK entre collections) |
+| Índices | `CREATE INDEX` explícito | o DO indexa as colunas consultadas |
+
+### Por que `urlNormalized` é uma coluna
+
+A constraint `uniqueOn` é avaliada pelo banco sobre valores **armazenados**. O banco não
+normaliza URL por nós, então o adaptador grava o resultado de `normalizeUrl()` (sem `utm_*`,
+`gclid`, fragmento ou barra final) em uma coluna própria e a usa na comparação. É a mesma
+estratégia do `UNIQUE` do SQLite.
+
+Consequência: a unicidade é garantida pelo armazenamento, não apenas pelo serviço. Um bug
+no serviço não consegue criar duas evidências para a mesma fonte.
 
 ---
 
-## 2. Collections
+## 3. Collections
 
-### 2.1 `users`
-
-| Coluna | Tipo | Observação |
-| --- | --- | --- |
-| `id` | TEXT PK | `usr_...` |
-| `email` | TEXT UNIQUE NOT NULL | identidade no adaptador local |
-| `name` | TEXT NOT NULL | exibição |
-| `avatar_url` | TEXT | opcional |
-| `created_at` | TEXT | ISO-8601 UTC |
-
-### 2.2 `sessions`
-
-| Coluna | Tipo | Observação |
-| --- | --- | --- |
-| `token_hash` | TEXT PK | SHA-256 do token; o token em si nunca é gravado |
-| `user_id` | TEXT FK → users | cascade |
-| `created_at`, `expires_at` | TEXT | expiração absoluta |
-
-Índice: `idx_sessions_user (user_id)`.
-
-### 2.3 `investigations`
-
-| Coluna | Tipo | Observação |
-| --- | --- | --- |
-| `id` | TEXT PK | `inv_...` |
-| `owner_id` | TEXT FK → users | **fronteira de isolamento** |
-| `title` | TEXT NOT NULL | 3–160 |
-| `description` | TEXT NOT NULL | pode ser vazio |
-| `objective` | TEXT NOT NULL | 10–2000, obrigatório |
-| `topic` | TEXT NOT NULL | base da consulta |
-| `keywords` | TEXT (JSON) | array de até 20 |
-| `status` | TEXT NOT NULL | `draft` \| `active` \| `completed` \| `archived` |
-| `created_at`, `updated_at` | TEXT | ISO-8601 UTC |
-
-Índice: `idx_investigations_owner (owner_id, updated_at DESC)`.
-
-### 2.4 `evidence`
-
-| Coluna | Tipo | Observação |
-| --- | --- | --- |
-| `id` | TEXT PK | `evi_...` |
-| `investigation_id` | TEXT FK → investigations | cascade |
-| `owner_id` | TEXT FK → users | redundante de propósito: permite checar posse sem join |
-| `title`, `url`, `domain` | TEXT | |
-| `url_normalized` | TEXT | usada só para deduplicação |
-| `snippet` | TEXT | trecho exibido |
-| `retrieved_content` | TEXT NULL | conteúdo integral **quando o provedor retornou** |
-| `published_at` | TEXT NULL | `NULL` quando a fonte não informa data |
-| `author` | TEXT NULL | |
-| `collected_at` | TEXT NOT NULL | momento da coleta (≠ data de publicação) |
-| `source` | TEXT | `exa` \| `demo` |
-| `source_metadata` | TEXT (JSON) | request id, disponibilidade de conteúdo |
-| `content_availability` | TEXT (JSON) | `['text','highlights','summary']` |
-| `relevance_score` | REAL NULL | 0..1 |
-| `relevance_breakdown` | TEXT (JSON) NULL | componentes, pesos, justificativa, ausentes |
-| `validation_status` | TEXT | espelho da última decisão |
-| `note` | TEXT | observação do pesquisador |
-| `created_at`, `updated_at` | TEXT | |
-
-Restrição: `UNIQUE (investigation_id, url_normalized)` — a garantia de não duplicação
-existe no banco, não só na aplicação.
-
-Índices: `idx_evidence_investigation`, `idx_evidence_owner`.
-
-### 2.5 `analyses`
-
-| Coluna | Tipo | Observação |
-| --- | --- | --- |
-| `id` | TEXT PK | `ana_...` |
-| `investigation_id`, `owner_id` | TEXT FK | cascade |
-| `evidence_ids` | TEXT (JSON) | **exatamente** o conjunto enviado |
-| `model` | TEXT | ex.: `gemini-2.5-flash` |
-| `status` | TEXT | `completed` \| `failed` |
-| `executive_summary` | TEXT | |
-| `findings` | TEXT (JSON) | `[{ statement, evidenceIds, confidence }]` |
-| `key_points`, `supported_claims` | TEXT (JSON) | arrays de string |
-| `contradictions` | TEXT (JSON) | `[{ description, evidenceIds }]` |
-| `limitations`, `information_gaps` | TEXT (JSON) | arrays de string |
-| `objective_alignment` | TEXT | |
-| `reference_ids` | TEXT (JSON) | ids citados, todos verificados |
-| `insufficient_evidence` | INTEGER | 0/1 |
-| `raw_structured_output` | TEXT (JSON) NULL | payload validado, para auditoria |
-| `usage` | TEXT (JSON) NULL | tokens |
-| `error_message` | TEXT NULL | preenchido em falhas |
-| `created_at` | TEXT | |
-
-Índice: `idx_analyses_investigation (investigation_id, created_at DESC)`.
-
-**Por que análises falhas são persistidas:** o usuário vê o que aconteceu, e o operador
-consegue distinguir "o modelo inventou uma referência" de "o botão não fez nada".
-
-### 2.6 `validations`
-
-| Coluna | Tipo | Observação |
-| --- | --- | --- |
-| `id` | TEXT PK | `val_...` |
-| `investigation_id`, `evidence_id`, `owner_id` | TEXT FK | cascade |
-| `status` | TEXT | `pending` \| `accepted` \| `rejected` \| `needs_review` |
-| `previous_status` | TEXT NULL | status no momento da decisão |
-| `justification` | TEXT | obrigatória em `rejected`/`needs_review` |
-| `created_at` | TEXT | |
-
-Índices: `idx_validations_evidence`, `idx_validations_investigation`.
-
-**Somente inserções.** Alterar uma decisão cria uma nova linha. O histórico é a sequência.
-
-### 2.7 `activity_logs`
-
-| Coluna | Tipo | Observação |
-| --- | --- | --- |
-| `id` | TEXT PK | `act_...` |
-| `investigation_id` | TEXT FK NULL | `NULL` para eventos de escopo de conta |
-| `owner_id` | TEXT FK → users | cascade |
-| `event_type` | TEXT | enum em `shared/domain.ts` |
-| `description` | TEXT | legível por humano |
-| `metadata` | TEXT (JSON) | detalhes específicos do evento |
-| `created_at` | TEXT | |
-
-Índices: `idx_activity_owner`, `idx_activity_investigation`.
-
-### 2.8 `usage_records`
-
-| Coluna | Tipo | Observação |
-| --- | --- | --- |
-| `id` | TEXT PK | `use_...` |
-| `owner_id` | TEXT FK → users | |
-| `provider` | TEXT | `exa` \| `gemini` |
-| `operation` | TEXT | `research` \| `analysis` |
-| `status` | TEXT | `success` \| `error` \| `blocked` |
-| `quantity` | INTEGER | 0 para bloqueios |
-| `investigation_id` | TEXT NULL | |
-| `error_code` | TEXT NULL | código tipado |
-| `metadata` | TEXT (JSON) | custo informado, tokens, etc. |
-| `created_at` | TEXT | |
-
-Índices: `idx_usage_owner_time`, `idx_usage_operation`.
-
-**Por que registrar bloqueios:** a cota é uma decisão de produto. Sem o registro de
-recusas, não há como responder "quantas vezes o limite interrompeu o usuário?".
-
-### 2.9 `research_queries`
-
-Guarda o hash da consulta para a guarda de duplicata. Não armazena resultados — apenas o
-fato de a consulta ter ocorrido, quando e com qual retorno.
-
-| Coluna | Tipo |
-| --- | --- |
-| `id` | TEXT PK |
-| `investigation_id`, `owner_id` | TEXT FK |
-| `query_hash` | TEXT (SHA-256) |
-| `query` | TEXT |
-| `result_count` | INTEGER |
-| `provider_request` | TEXT NULL |
-| `created_at` | TEXT |
-
-Índice: `idx_research_hash (owner_id, query_hash, created_at DESC)`.
-
-### 2.10 `app_settings`
-
-Chave/valor para preferências administrativas (limites por usuário). Não guarda segredos.
-
----
-
-## 3. Regras de isolamento
-
-Toda tabela com dado de usuário carrega `owner_id`. A verificação acontece em duas
-camadas:
-
-1. **Serviço** — `requireOwned(id, userId)` carrega a linha e compara. Se não bater,
-   lança `not_found` (não `forbidden`): a API não confirma que o registro existe.
-2. **Query** — listagens sempre filtram por `owner_id` no `WHERE`.
-
-Não existe caminho de código que aceite um `ownerId` vindo do cliente. O valor vem sempre
-da sessão verificada.
-
-### Testes que provam isso
-
-`tests/integration/auth-isolation.test.ts` cobre, com dois usuários reais:
-
-- leitura, atualização, exclusão e exportação de investigação alheia → `404`;
-- listagem não inclui investigações de outro usuário;
-- pesquisa em investigação alheia → `404` **e nenhuma chamada ao provedor**;
-- validação de evidência alheia → `404`.
-
----
-
-## 4. Índices e desempenho
-
-Os índices cobrem exatamente as consultas que existem:
-
-| Consulta | Índice |
-| --- | --- |
-| Listar investigações do usuário por atualização | `idx_investigations_owner` |
-| Evidências de uma investigação | `idx_evidence_investigation` |
-| Contagem de evidências por dono | `idx_evidence_owner` |
-| Análises de uma investigação | `idx_analyses_investigation` |
-| Histórico de uma evidência | `idx_validations_evidence` |
-| Feed global | `idx_activity_owner` |
-| Cota do dia | `idx_usage_owner_time` |
-| Guarda de duplicata | `idx_research_hash` |
-
-Não há índice "preventivo": cada um corresponde a uma query que o código executa.
-
----
-
-## 5. Migrações
-
-O esquema usa `CREATE TABLE IF NOT EXISTS`, aplicado na inicialização. Para evolução:
-
-1. adicione a nova coluna/tabela ao `SCHEMA` em `server/db.ts`;
-2. escreva um `ALTER TABLE ... ADD COLUMN` idempotente se a tabela já existir;
-3. adicione um teste de integração que exercite a leitura após a migração.
-
-Para uma mudança destrutiva, o caminho é exportar (o export JSON já existe) e recriar —
-não há migração automática que apague dados sem confirmação.
-
----
-
-## 6. Equivalência com DeepSpace Records
-
-Para portar o esquema, use `CollectionSchema` de `deepspace/schema`:
+Todas as collections de domínio declaram `ownerField: 'ownerId'` e o bloco de permissões:
 
 ```ts
-import type { CollectionSchema } from 'deepspace/schema'
-
-export const investigationsSchema: CollectionSchema = {
-  name: 'investigations',
-  columns: [
-    { name: 'ownerId',      storage: 'text', interpretation: 'plain' },
-    { name: 'title',        storage: 'text', interpretation: 'plain' },
-    { name: 'description',  storage: 'text', interpretation: 'plain' },
-    { name: 'objective',    storage: 'text', interpretation: 'plain' },
-    { name: 'topic',        storage: 'text', interpretation: 'plain' },
-    { name: 'keywords',     storage: 'text', interpretation: { kind: 'json' } },
-    { name: 'status',       storage: 'text', interpretation: { kind: 'select', options: ['draft','active','completed','archived'] } },
-  ],
-  permissions: {
-    member: { read: 'own', create: true, update: 'own', delete: 'own' },
-    admin:  { read: true,  create: true, update: true,  delete: true },
-  },
+ownerField: 'ownerId',
+permissions: {
+  viewer: { read: 'own', create: false, update: false, delete: false },
+  member: { read: 'own', create: true,  update: 'own', delete: 'own'   },
+  admin:  { read: true,  create: true,  update: true,  delete: true     },
 }
 ```
 
-Diferenças a considerar:
+### 3.1 `investigations`
 
-| SQLite local | DeepSpace Records |
-| --- | --- |
-| `TEXT` com JSON serializado manualmente | `{ kind: 'json' }` serializa/deserializa automaticamente |
-| `UNIQUE(investigation_id, url_normalized)` | `uniqueOn: ['investigationId', 'urlNormalized']` |
-| `owner_id` checado no serviço | `permissions.member.read: 'own'` reforça no banco |
-| `CASCADE` no `DELETE` | deleção explícita em cascata nos serviços |
-| `REAL` para score | `storage: 'number'`, `interpretation: 'plain'` |
+| Campo | Storage | Interpretação | Notas |
+| --- | --- | --- | --- |
+| `ownerId` | text | plain | obrigatório, fronteira de isolamento |
+| `title` | text | plain | obrigatório, `maxLength: 160` |
+| `description` | text | plain | `maxLength: 4000` |
+| `objective` | text | plain | obrigatório, `maxLength: 2000` |
+| `topic` | text | plain | obrigatório, `maxLength: 300` |
+| `keywords` | text | json | array |
+| `status` | text | select | `draft` \| `active` \| `completed` \| `archived` |
+| `createdAt`, `updatedAt` | text | plain | ISO-8601 UTC |
 
-O adaptador DeepSpace deve implementar as mesmas interfaces de
-`server/repositories/ports.ts`. Nenhum serviço muda.
+### 3.2 `evidence`
+
+Campos como no SQLite, mais `urlNormalized`. A `uniqueOn` é
+`['investigationId', 'urlNormalized']`.
+
+`retrievedContent`, `publishedAt` e `author` são nullable de propósito: o provedor pode não
+devolvê-los, e o produto exige declarar a ausência em vez de preencher.
+
+### 3.3 `analyses`
+
+`referenceIds` guarda **só ids**. Títulos e URLs são resolvidos das evidências vivas no
+momento da leitura, então renomear uma fonte não deixa um rótulo velho em uma análise
+antiga.
+
+`status` é `completed` | `failed`. Análises falhas são persistidas com `errorMessage` — o
+usuário vê o que aconteceu, e o operador distingue falha de provedor de bug.
+
+### 3.4 `validations`
+
+Somente inserções. `previousStatus` registra o estado anterior, então o histórico é a
+sequência de linhas ordenada por `createdAt`.
+
+### 3.5 `activity_logs` e `usage_records`
+
+**Append-only para membros**: `create: true`, `update: false`, `delete: false`. Uma trilha
+de auditoria que o auditado pode reescrever não é uma trilha de auditoria, e uma cota que o
+usuário pode apagar não é uma cota.
+
+### 3.6 `research_queries`
+
+Guarda o hash da consulta para a guarda de duplicata. Não guarda resultados.
+
+### 3.7 `app_settings`
+
+`uniqueOn: ['ownerId', 'key']`. Preferências por usuário; nunca segredos.
+
+### 3.8 `users`
+
+Obrigatório pelo SDK (`USERS_COLUMNS`). Nunca renomear, substituir ou remover. A linha é
+provisionada pela plataforma quando alguém entra; o adaptador só lê.
+
+---
+
+## 4. Acesso
+
+### 4.1 Pelo Worker
+
+Todo acesso passa por `server/repositories/records/transport.ts`, que fala com o endpoint
+de tools do Durable Object:
+
+```
+POST https://internal/api/tools/execute
+x-user-id: <usuário verificado>
+{ "tool": "records.query", "params": { ... } }
+```
+
+`X-App-Action` **não** é enviado (exceto no leitor de consumo global — ver §5). Sem esse
+header, o DO:
+
+1. resolve o papel do chamador a partir de `x-user-id`;
+2. aplica as `permissions` da collection;
+3. filtra linhas por `ownerField` antes de devolver.
+
+### 4.2 Pelo navegador
+
+O navegador **não** acessa Records para dados de negócio. `RecordProvider`/`RecordScope`
+são montados para as superfícies do SDK (autenticação, presença, e qualquer view em tempo
+real futura), com as mesmas `permissions` — mas as telas do SignalMesh leem `/api/*`, onde a
+autorização e o cálculo acontecem. Não há caminho em que o cliente escreva direto em uma
+collection sem passar pela validação e pelas regras do servidor.
+
+---
+
+## 5. Consumo global
+
+O teto diário global precisa somar todas as contas. `countInWindow(null, …)` é respondido por
+`createGlobalUsageReader`, que usa o transporte administrativo e devolve **um número**.
+
+Nenhuma outra operação usa esse transporte. `tests/integration/records-security.test.ts`
+verifica que a visão de membro vê apenas o próprio consumo e que a visão administrativa é a
+única que soma a plataforma.
+
+---
+
+## 6. Migração de dados locais
+
+O caminho é `npm run migrate:records`, implementado em `server/migration/records.ts`:
+
+1. lê cada linha pela interface de repositório (fonte: SQLite);
+2. grava com o **id original**, então as relações sobrevivem;
+3. normaliza URLs na importação, para a constraint de unicidade concordar com o que o
+   adaptador Records teria gravado;
+4. é idempotente: uma segunda execução não duplica, e uma linha idêntica conta como
+   `unchanged`;
+5. `--dry-run` relata o que faria sem gravar;
+6. **nunca apaga a origem**.
+
+```
+Migração 2026-… → 2026-…
+investigations     lidos     1 · gravados     1 · iguais     0 · ignorados    0 · falhas 0
+evidence           lidos     1 · gravados     1 · iguais     0 · ignorados    0 · falhas 0
+…
+Total: 6 lidos, 6 gravados, 0 inalterados, 0 ignorados, 0 falhas.
+```
+
+A migração escreve em nome dos donos originais, então roda com credencial de operador —
+nunca pelo navegador. `tests/integration/migration.test.ts` cobre os sete cenários:
+cópia completa, normalização de URL, idempotência, dry-run, origem intacta, filtro por dono
+e relatório legível.
+
+---
+
+## 7. Schema local (SQLite)
+
+O esquema em `server/db.ts` é aplicado com `CREATE TABLE IF NOT EXISTS`, WAL e
+`foreign_keys = ON`. Tabelas: `users`, `sessions`, `investigations`, `evidence`,
+`analyses`, `validations`, `activity_logs`, `usage_records`, `research_queries`,
+`app_settings`.
+
+`sessions` existe **apenas** aqui: a plataforma gerencia a sessão no runtime de produção.
+
+Diferenças a lembrar ao mexer no adaptador Records:
+
+- SQLite aplica FK (é preciso criar a linha em `users` antes); Records não tem FK entre
+  collections.
+- SQLite devolve `INTEGER` para booleano; Records devolve booleano pela interpretação.
+- SQLite não tem `nextOffset`; o adaptador Records pagina e o repositório junta as páginas.
+
+A suíte de paridade cobre esses pontos e falha se um adaptador divergir.
+
+---
+
+## 8. Evolução
+
+Para adicionar um campo:
+
+1. adicione a coluna em `src/schemas.ts` (Records) **e** em `server/db.ts` (SQLite);
+2. adicione ao mapeamento no adaptador Records e no SQLite;
+3. adicione ao DTO em `shared/domain.ts` se for exposto;
+4. adicione um caso à suíte de paridade.
+
+O SDK roda migrações **aditivas** automaticamente quando o Durable Object reinicia: criar
+tabela e `ALTER TABLE ADD COLUMN` são seguros. Mudanças destrutivas (remover coluna, mudar
+tipo, renomear campo) não são — nesse caso, exporte (JSON) e recrie.
+
+Para uma mudança destrutiva em produção, o caminho é: exportar por investigação, migrar os
+dados para a nova forma fora do app, e só então alterar o schema.

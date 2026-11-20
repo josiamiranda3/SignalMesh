@@ -10,9 +10,8 @@
 
 import { createServer, type Server } from 'node:http'
 import type { AddressInfo } from 'node:net'
-import { serve } from '@hono/node-server'
-import { buildApp, type BuiltApp } from '../../server/app.ts'
-import type { Services } from '../../server/services/index.ts'
+import { buildApp, serveApp, type BuiltApp } from '../../server/bootstrap.ts'
+import type { NodeServices } from '../../server/services/node.ts'
 
 export interface MockState {
   exaRequests: Array<Record<string, unknown>>
@@ -40,7 +39,7 @@ export interface MockState {
 export interface Harness {
   base: string
   app: BuiltApp
-  services: Services
+  services: NodeServices
   mock: MockState
   close: () => Promise<void>
 }
@@ -235,7 +234,6 @@ export async function startHarness(overrides: Record<string, string> = {}): Prom
     env: {
       NODE_ENV: 'development',
       DATABASE_URL: ':memory:',
-      APP_ORIGIN: 'http://127.0.0.1:9999',
       SESSION_SECRET: 'test-secret-value-that-is-long-enough-1234567890',
       ENABLE_EXTERNAL_APIS: 'true',
       ENABLE_PAID_OPERATIONS: 'false',
@@ -257,56 +255,21 @@ export async function startHarness(overrides: Record<string, string> = {}): Prom
 
   // The app must listen on a real socket: the tests exercise cookies, the CSRF
   // origin check and streaming responses, not just the handler in isolation.
-  const appServer = serve({ fetch: built.app.fetch, port: 0, hostname: '127.0.0.1' })
-  await new Promise<void>((resolve) => {
-    if ('listening' in appServer && appServer.listening) resolve()
-    else appServer.once('listening', () => resolve())
-  })
-  const appPort = (appServer.address() as AddressInfo).port
-  const appBase = `http://127.0.0.1:${appPort}`
-
-  // APP_ORIGIN is fixed at build time, so the CSRF origin check must match the
-  // origin the client actually uses. Rebuild with the resolved port.
-  await new Promise<void>((resolve) => appServer.close(() => resolve()))
-
-  const finalBuilt = await buildApp({
-    env: {
-      NODE_ENV: 'development',
-      DATABASE_URL: ':memory:',
-      APP_ORIGIN: appBase,
-      SESSION_SECRET: 'test-secret-value-that-is-long-enough-1234567890',
-      ENABLE_EXTERNAL_APIS: 'true',
-      ENABLE_PAID_OPERATIONS: 'false',
-      EXA_API_KEY: 'test-exa-key',
-      EXA_BASE_URL: providerBase,
-      EXA_TIMEOUT_MS: '3000',
-      GEMINI_API_KEY: 'test-gemini-key',
-      GEMINI_BASE_URL: providerBase,
-      GEMINI_MODEL: 'gemini-2.5-flash',
-      GEMINI_TIMEOUT_MS: '3000',
-      RESEARCH_DAILY_LIMIT: '3',
-      ANALYSIS_DAILY_LIMIT: '3',
-      RESEARCH_GLOBAL_DAILY_LIMIT: '30',
-      ANALYSIS_GLOBAL_DAILY_LIMIT: '30',
-      DUPLICATE_GUARD_SECONDS: '90',
-      ...overrides,
-    },
-  })
-
-  const finalServer = serve({ fetch: finalBuilt.app.fetch, port: appPort, hostname: '127.0.0.1' })
-  await new Promise<void>((resolve) => finalServer.once('listening', () => resolve()))
+  // The origin check accepts the request's own origin, so a single build serves
+  // an ephemeral port without a rebuild.
+  const { base: appBase, close: closeServer } = await serveApp(built.app)
 
   return {
     base: appBase,
-    app: finalBuilt,
-    services: finalBuilt.services,
+    app: built,
+    services: built.services,
     mock,
     close: async () => {
       // Node's test runner shares one process across suites here, so a server
       // closed by another suite's teardown must not throw on a second close.
       await new Promise<void>((resolve) => {
         try {
-          finalServer.close(() => resolve())
+          void closeServer().then(resolve, resolve)
         } catch {
           resolve()
         }
@@ -319,7 +282,7 @@ export async function startHarness(overrides: Record<string, string> = {}): Prom
         }
       })
       try {
-        finalBuilt.close()
+        built.close()
       } catch {
         /* already closed */
       }
