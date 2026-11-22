@@ -65,16 +65,20 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   // only the pre-fetch fallback.
   const [providerLabel, setProviderLabel] = useState(() => t('login.providerFallback'))
 
-  const refresh = useCallback(async () => {
+  const checkSession = useCallback(async (authMode: AuthState['mode']) => {
     try {
-      // No bearer here on purpose: this call *establishes* whether a session
-      // exists, so it must rely on the cookie alone. A cached token could
-      // otherwise keep reporting an identity after sign-out.
-      const sessionUser = await api.getAnonymous<SessionUser>('/api/auth/me')
+      // DeepSpace stores an opaque session token in the HttpOnly cookie.
+      // Exchange it through the SDK for a platform JWT before calling /me;
+      // the Worker verifies that JWT, not the Better Auth session token.
+      // Local mode has no platform JWT and continues to use its local cookie.
+      const sessionUser =
+        authMode === 'deepspace'
+          ? await api.get<SessionUser>('/api/auth/me')
+          : await api.getAnonymous<SessionUser>('/api/auth/me')
+
       setUser(sessionUser)
       setStatus('authenticated')
       setError(null)
-      // A session exists again: allow the next protected call to fetch a token.
       resetTokenProviderState()
     } catch (caught) {
       if (caught instanceof ApiError && caught.status === 401) {
@@ -89,47 +93,45 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     }
   }, [t])
 
+  const refresh = useCallback(async () => {
+    await checkSession(mode)
+  }, [checkSession, mode])
+
   useEffect(() => {
     let active = true
 
-    // Which adapter is active is a server fact, fetched once. Failure is not
-    // fatal: the app stays usable, it just cannot label the sign-in surface.
+    // Load the auth mode first: in DeepSpace mode /me must carry a JWT obtained
+    // through getAuthToken(), while local mode must remain cookie-only.
     api
       .get<AuthConfigResponse>('/api/auth/config')
-      .then((config) => {
+      .then(async (config) => {
         if (!active) return
         setMode(config.authMode)
         setProviderLabel(config.providerLabel)
 
-        // Install the JWT source only when the platform owns identity. Under the
-        // local adapter there is no session cookie to exchange, and the SDK is
-        // not mounted.
-        if (config.authMode !== 'deepspace') {
+        if (config.authMode === 'deepspace') {
+          setTokenProvider(async () => {
+            const mod = await import('deepspace')
+            return mod.getAuthToken()
+          })
+        } else {
           setTokenProvider(null)
-          return
         }
 
-        setTokenProvider(async () => {
-          // Imported lazily: the SDK is a large module and the local runtime
-          // never needs it. A failed import degrades to cookie-only requests
-          // rather than breaking every API call.
-          const mod = await import('deepspace')
-          return mod.getAuthToken()
-        })
+        await checkSession(config.authMode)
       })
-      .catch(() => {
-        /* keep defaults */
+      .catch((caught) => {
+        if (!active) return
+        setTokenProvider(null)
+        setStatus('anonymous')
+        setUser(null)
+        setError(caught instanceof Error ? caught.message : t('login.sessionCheckError'))
       })
-
-    // Session resolution is an external-system read; setting state from its
-    // response is the point of the effect.
-    // eslint-disable-next-line react-hooks/set-state-in-effect
-    void refresh()
 
     return () => {
       active = false
     }
-  }, [refresh])
+  }, [checkSession, t])
 
   const signIn = useCallback(async (input: { email: string; name?: string }) => {
     const sessionUser = await api.post<SessionUser>('/api/auth/login', input)

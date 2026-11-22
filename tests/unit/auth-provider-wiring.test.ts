@@ -24,7 +24,7 @@ describe('AuthProvider: token source lifecycle', () => {
   it('registers the token provider only for deepspace mode', () => {
     const code = source()
     // The install is guarded by the mode check; local mode clears it.
-    assert.match(code, /config\.authMode !== 'deepspace'/)
+    assert.match(code, /config\.authMode === 'deepspace'/)
     assert.match(code, /setTokenProvider\(null\)/)
     assert.match(code, /setTokenProvider\(async \(\) => \{/)
   })
@@ -36,10 +36,18 @@ describe('AuthProvider: token source lifecycle', () => {
     assert.ok(!/['"`]\/api\/auth\/token['"`]/.test(code), 'the provider must not fetch the token endpoint')
   })
 
-  it('decides session existence with an anonymous call', () => {
-    // `/api/auth/me` answers "is there a session?" — a stale bearer there would
-    // report an identity the user already signed out of.
-    assert.match(source(), /api\.getAnonymous<SessionUser>\('\/api\/auth\/me'\)/)
+  it('uses the SDK bearer for DeepSpace session checks and anonymous cookie auth locally', () => {
+    const code = source()
+    assert.match(code, /authMode === 'deepspace'[\s\S]*?api\.get<SessionUser>\('\/api\/auth\/me'\)/)
+    assert.match(code, /api\.getAnonymous<SessionUser>\('\/api\/auth\/me'\)/)
+  })
+
+  it('loads auth mode and installs the token provider before checking the session', () => {
+    const code = source()
+    const configFetch = code.indexOf(".get<AuthConfigResponse>('/api/auth/config')")
+    const providerInstall = code.indexOf('setTokenProvider(async () =>')
+    const sessionCheck = code.indexOf('await checkSession(config.authMode)')
+    assert.ok(configFetch >= 0 && providerInstall > configFetch && sessionCheck > providerInstall)
   })
 
   it('logs out anonymously so the call does not need the token being revoked', () => {
