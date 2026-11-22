@@ -422,7 +422,7 @@ export default {
     // directly instead of allowing the Assets layer to redirect them.
     if (!last.includes('.')) {
       const shellUrl = new URL(request.url)
-      shellUrl.pathname = '/index.html'
+      shellUrl.pathname = '/'
 
       return env.ASSETS.fetch(
         new Request(shellUrl.toString(), request),

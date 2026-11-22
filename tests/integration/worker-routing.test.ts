@@ -319,7 +319,7 @@ describe('Worker fetch routing branches', () => {
 
   it('serves the SPA shell through index.html', () => {
     assert.ok(
-      source.includes("shellUrl.pathname = '/index.html'"),
+      source.includes("shellUrl.pathname = '/'"),
       'Worker must resolve the SPA shell',
     )
   })
@@ -330,7 +330,7 @@ describe('Worker fetch routing branches', () => {
     )
 
     const shellIndex = source.indexOf(
-      "shellUrl.pathname = '/index.html'",
+      "shellUrl.pathname = '/'",
     )
 
     assert.ok(apiIndex >= 0)
