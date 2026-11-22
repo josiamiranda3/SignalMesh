@@ -19,7 +19,7 @@ run_worker_first = ["/api/*", "/ws/*", "/internal/*", "/v1/*", "/_deepspace/*", 
 # Replaced by `npx deepspace app init` on the app's first use. The app is NOT
 # registered yet: see docs/deployment.md for the gate that must be cleared
 # before the first command that claims this id.
-DEEPSPACE_APP_ID = "__APP_ID__"
+DEEPSPACE_APP_ID = "app_01M81TNJ1N7E1R12364FQK4WCK"
 APP_NAME = "signalmess"
 NATIVE_AUTH_REDIRECT_URIS = ""
 

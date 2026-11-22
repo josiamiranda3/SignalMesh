@@ -273,7 +273,7 @@ export default function DashboardPage() {
                 </h2>
                 <Link
                   to="/investigations"
-                  className="flex min-h-8 items-center gap-1 text-[0.75rem] text-ink-subtle transition-colors hover:text-ink"
+                  className="flex min-h-11 items-center gap-1 text-[0.75rem] text-ink-subtle transition-colors hover:text-ink"
                 >
                   {t('dashboard.viewAll')}
                   <ArrowRight className="size-3" aria-hidden />

@@ -490,7 +490,7 @@ requisição posterior — de outra suíte, na mesma porta efêmera.
 mudança é no servidor de teste, não no código de produção, e não exige dependência nova
 (`undici` é apenas transitiva aqui, via `wrangler`).
 
-Verificação: **5 execuções completas consecutivas, 440/440 em todas**.
+Verificação: **5 execuções completas consecutivas, 440/440 em todas** (baseline daquela versão; a suíte hoje tem 739 testes — ver §9).
 
 A lição vale registrar: uma falha "intermitente" tinha **duas** causas independentes. Corrigir
 a primeira reduziu a frequência, o que quase a fez passar por resolvida.

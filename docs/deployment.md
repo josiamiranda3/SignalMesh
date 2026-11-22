@@ -171,6 +171,11 @@ Portanto, na primeira publicação:
 
 **Não execute `app init` nem `deploy` antes dos passos 1–3.** Este é o ponto de não retorno.
 
+> **Estado verificado em 22/11/2026.** O repositório tem 3 commits e **nenhum remoto
+> configurado** (`git remote -v` vazio). Ou seja: o passo 1–3 **ainda não aconteceu**, e um
+> `deepspace deploy` hoje travaria **DeepSpace** como origem, contrariando o requisito
+> acima. Adicionar o remoto é pré-requisito, não formalidade.
+
 ### 5.3 Comandos que serão executados (e o que cada um faz)
 
 Nenhum destes foi executado. Cada um precisa de autorização explícita.

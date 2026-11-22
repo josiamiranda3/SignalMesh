@@ -93,6 +93,17 @@ async function main(): Promise<void> {
 
   const { page, close } = await Page.open({ width: 1440, height: 950 })
   try {
+    /**
+     * Pin the interface language to Portuguese.
+     *
+     * These flows were written against the Portuguese copy, before the i18n
+     * work made English the default. Pinning keeps every assertion meaningful;
+     * the English interface has its own coverage in tests/e2e/audit-i18n-*.ts.
+     * The preference is read at boot, so it must be set before the first render.
+     */
+    await page.goto(`${base}/login`)
+    await page.evaluate(`window.localStorage.setItem('signalmess.locale', 'pt-BR')`)
+
     console.log('\nA. Dados de demonstração são claramente rotulados')
     await page.goto(`${base}/login`)
     await page.waitForText('Entrar no SignalMesh', 12000)
@@ -228,7 +239,7 @@ async function main(): Promise<void> {
     const queue = await page.text()
     check(queue.includes('Pendentes'), 'fila global mostra aba de pendentes')
     check(queue.includes('Primeira fonte'), 'fila global lista evidências de qualquer investigação')
-    await page.clickText('Revisão', 'button')
+    await page.clickText('Revisar', 'button')
     await page.waitForText('Deseja solicitar revisão')
     await page.fill('textarea[aria-label="Justificativa da decisão"]', 'Precisa de verificação adicional.')
     await page.clickText('Confirmar decisão')

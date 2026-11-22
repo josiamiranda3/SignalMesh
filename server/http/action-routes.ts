@@ -1,6 +1,9 @@
 import type { Hono } from 'hono'
 import type { AppEnv } from './middleware.ts'
+import { bearerToken } from './middleware.ts'
 import { createActions, type ActionEnvironment } from '../actions/index.ts'
+import { lookupOwnAction } from '../actions/resolve.ts'
+import { validateDeleteWhere } from '../actions/types.ts'
 import type { ActionHandler, ActionToolsPort } from '../actions/types.ts'
 import type { RecordToolCaller, ToolResult } from '../repositories/records/transport.ts'
 
@@ -20,7 +23,7 @@ import type { RecordToolCaller, ToolResult } from '../repositories/records/trans
  * It is deliberately the **only** administrative surface this app exposes, and
  * it is built so that privilege cannot be reached anonymously:
  *
- *   1. A verified identity is required before dispatch (`resolveCaller`).
+ *   1. A **bearer** credential is required before dispatch (`resolveCaller`).
  *      The value comes from `verifyJwt`; no header or body field is consulted.
  *   2. The action carries its own policy (`selfScoped` / `ownerOnly`), applied
  *      in the registry — so an authenticated but unauthorized caller is
@@ -30,12 +33,32 @@ import type { RecordToolCaller, ToolResult } from '../repositories/records/trans
  *      RecordRoom does no per-row RBAC under it, ownership is enforced by the
  *      action itself (`userBound` also stamps the caller on every write).
  *
+ * ## Why bearer only (v0.2.5)
+ *
+ * This route is mounted on its **own** Hono instance, before the app that
+ * carries `csrfGuard`. It therefore never passes through the CSRF middleware.
+ * Accepting a session cookie here was a real hole: a cookie is an *ambient*
+ * credential the browser attaches by itself, so any page on the internet could
+ * cause a signed-in user's browser to POST to this privileged surface with the
+ * cookie attached and no marker header — exactly the CSRF case the rest of the
+ * app defends against.
+ *
+ * The route now requires the credential to be *explicit*: `Authorization:
+ * Bearer <jwt>`. A cross-origin page cannot set that header without a preflight
+ * this app never grants, and cannot read the token to set it. Requests carrying
+ * only a cookie are refused with 401 before anything else runs.
+ *
  * There is no `/api/internal/*` route, no client-supplied identity header, and
  * no migration endpoint reachable from the browser.
  */
 
 export interface ActionRouteOptions {
-  /** Verify the request's JWT. Returns the subject, or null when unauthenticated. */
+  /**
+   * Verify an explicit **bearer** credential. Returns the subject, or null.
+   *
+   * Implementations must read the token from the `Authorization` header only.
+   * A cookie must never satisfy this: see the module comment.
+   */
   resolveCaller: (request: Request) => Promise<string | null>
   /** Env bindings used for the owner gate. */
   environment: ActionEnvironment
@@ -43,7 +66,13 @@ export interface ActionRouteOptions {
   createTools: (callerId: string) => ActionToolsPort
 }
 
-/** Names allowed to be dispatched. Anything else is 404, not "unknown action". */
+/**
+ * Names allowed to be dispatched. Anything else is 404, not "unknown action".
+ *
+ * This is the outer gate; `lookupOwnAction` is the inner one. Both are needed:
+ * the allowlist decides *what* is reachable, the own-property lookup decides
+ * that resolving the name cannot walk into the object's prototype.
+ */
 const ALLOWED_ACTIONS = new Set(['migrateRecords'])
 
 export function registerActionRoutes(app: Hono<AppEnv>, options: ActionRouteOptions): void {
@@ -53,10 +82,19 @@ export function registerActionRoutes(app: Hono<AppEnv>, options: ActionRouteOpti
     const name = c.req.param('name')
 
     // Unknown names are indistinguishable from a wrong path: an attacker learns
-    // nothing about which actions exist.
-    const action = ALLOWED_ACTIONS.has(name) ? (actions[name] as ActionHandler | undefined) : undefined
+    // nothing about which actions exist. `lookupOwnAction` only ever returns a
+    // handler registered as an **own** property, so `constructor`, `toString`,
+    // `__proto__` and friends resolve to nothing even if the allowlist were
+    // widened by mistake.
+    const action = lookupOwnAction(actions, name, ALLOWED_ACTIONS) as ActionHandler | undefined
     if (!action) {
       return c.json({ success: false as const, error: 'Action not found' }, 404)
+    }
+
+    // Explicit credential required. `bearerToken` reads only the Authorization
+    // header, so a cookie-only request cannot authenticate here.
+    if (!bearerToken(c.req.raw)) {
+      return c.json({ success: false as const, error: 'Unauthorized' }, 401)
     }
 
     // Identity is established before anything else happens.
@@ -97,6 +135,12 @@ export function registerActionRoutes(app: Hono<AppEnv>, options: ActionRouteOpti
  * The caller is the verified user id; `appAction` is true because that is what
  * the action surface is for. It does not widen *data* access beyond the caller,
  * because `userBound` still stamps that same caller.
+ *
+ * `deleteWhere` is exposed here because the port previously stopped short of
+ * the transport: `RecordStore` had the operation, the transport could perform
+ * it, but no action could reach it. Passing it through with the same guards the
+ * transport applies keeps the two surfaces consistent instead of leaving a
+ * capability that only looks absent.
  */
 export function createActionTools(caller: RecordToolCaller): ActionToolsPort {
   async function invoke(tool: string, params: Record<string, unknown>): Promise<ToolResult> {
@@ -121,6 +165,20 @@ export function createActionTools(caller: RecordToolCaller): ActionToolsPort {
       if (queryOptions?.limit !== undefined) params['limit'] = queryOptions.limit
       return invoke('records.query', params) as never
     },
+    async deleteWhere(collection, where, limit) {
+      // Validated in the tool, not left to each action: an empty filter or an
+      // unbounded limit would be a whole-collection delete under `X-App-Action`,
+      // where the RecordRoom applies no per-row RBAC.
+      const checked = validateDeleteWhere({ collection, where, limit })
+      if (!checked.ok) {
+        return { success: false, error: checked.error, code: 'invalid' } as never
+      }
+      const params: Record<string, unknown> = {
+        collection: checked.collection,
+        where: checked.where,
+        limit: checked.limit,
+      }
+      return invoke('records.deleteWhere', params) as never
+    },
   }
 }
-

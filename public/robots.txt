@@ -1,0 +1,29 @@
+# SignalMesh — indexing policy
+#
+# The product is a private, authenticated application. The landing page explains
+# what it does; everything behind sign-in is a user's own research data and must
+# never be indexed.
+#
+# This is the conservative choice, and it is a *pending product decision*, not a
+# permanent one: publishing a public, indexable marketing site would mean
+# prerendering the landing route and adding a sitemap. See
+# docs/preflight-deepspace-v0.2.4.1.md for the open question.
+#
+# `Disallow: /` is deliberately paired with `noindex` in index.html rather than
+# used alone: a crawler that never fetches a page cannot read a meta directive,
+# so belt and braces here means "do not crawl" *and* "do not index if you do".
+
+User-agent: *
+Disallow: /
+
+# Private application surfaces, listed explicitly so a future relaxation of the
+# blanket rule above cannot accidentally expose them.
+Disallow: /dashboard
+Disallow: /investigations
+Disallow: /validation
+Disallow: /history
+Disallow: /settings
+Disallow: /login
+Disallow: /api/
+
+# No sitemap is published: there are no public pages to enumerate.

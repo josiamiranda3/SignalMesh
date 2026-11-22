@@ -66,11 +66,30 @@ function fakeTools(): ActionToolsPort {
     async query() {
       return { success: true, data: { records: [], count: 0 } }
     },
+    async deleteWhere() {
+      return { success: true, data: { deleted: 0 } }
+    },
   }
 }
 
-async function call(app: Hono<AppEnv>, request: Call): Promise<{ status: number; body: Record<string, unknown> }> {
-  const headers: Record<string, string> = { 'content-type': 'application/json', ...request.headers }
+/**
+ * Issue a request to the action route.
+ *
+ * The route requires an **explicit** bearer credential (v0.2.5), so a default
+ * `Authorization` header is attached here: these tests are about authorization
+ * policy, not about credential transport, and omitting it would turn every one
+ * of them into the same 401. The bearer-specific tests build their own headers
+ * and pass `bearer: false` when they need to omit or replace it.
+ */
+async function call(
+  app: Hono<AppEnv>,
+  request: Call & { bearer?: string | null },
+): Promise<{ status: number; body: Record<string, unknown> }> {
+  const headers: Record<string, string> = {
+    'content-type': 'application/json',
+    ...(request.bearer === null ? {} : { authorization: `Bearer ${request.bearer ?? 'test-bearer-token'}` }),
+    ...request.headers,
+  }
   const response = await app.request(`http://localhost${request.path}`, {
     method: request.method,
     headers,

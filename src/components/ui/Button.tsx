@@ -26,11 +26,20 @@ const VARIANTS: Record<Variant, string> = {
   quiet: 'text-ink-subtle hover:text-ink-muted hover:bg-raised/70',
 }
 
+/**
+ * Size scale.
+ *
+ * Heights are ≥44px so every button is a comfortable touch target. WCAG 2.5.8
+ * only requires 24×24 CSS px, but a 36–38px control is visibly fiddly on a phone
+ * and the audit flagged it. `min-h` rather than `h` keeps the row growing with a
+ * two-line label instead of clipping it; the horizontal padding scales with the
+ * size so the hierarchy between sm/md/lg is still legible.
+ */
 const SIZES: Record<Size, string> = {
-  sm: 'h-8 px-3 text-[0.8125rem] gap-1.5 rounded-md',
-  md: 'h-9.5 px-4 text-sm gap-2 rounded-md',
-  lg: 'h-11 px-5 text-sm gap-2 rounded-lg',
-  icon: 'h-8.5 w-8.5 rounded-md justify-center',
+  sm: 'min-h-11 px-3.5 text-[0.8125rem] gap-1.5 rounded-md',
+  md: 'min-h-11 px-4 text-sm gap-2 rounded-md',
+  lg: 'min-h-12 px-5 text-sm gap-2 rounded-lg',
+  icon: 'size-11 rounded-md justify-center',
 }
 
 export interface ButtonProps extends ButtonHTMLAttributes<HTMLButtonElement> {

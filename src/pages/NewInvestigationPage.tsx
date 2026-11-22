@@ -145,7 +145,7 @@ export default function NewInvestigationPage() {
     <PageContainer className="max-w-[1000px]">
       <Link
         to="/investigations"
-        className="mb-5 inline-flex min-h-9 items-center gap-1.5 text-[0.75rem] text-ink-subtle transition-colors hover:text-ink"
+        className="mb-5 inline-flex min-h-11 items-center gap-1.5 text-[0.75rem] text-ink-subtle transition-colors hover:text-ink"
       >
         <ArrowLeft className="size-3.5" aria-hidden />
         {t('newInvestigation.back')}

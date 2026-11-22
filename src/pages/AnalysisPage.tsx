@@ -367,7 +367,7 @@ function AnalysisView({ analysis, evidenceCount }: { analysis: Analysis; evidenc
       {/* Findings */}
       <section className="panel p-5" aria-labelledby="findings-heading">
         <SectionHeader
-          title={t('analysis.keyPointsTitle')}
+          title={t('analysis.findingsTitle')}
           description={t('analysis.findingsDescription')}
           actions={<span className="tnum text-[0.75rem] text-ink-faint">{analysis.findings.length}</span>}
         />

@@ -2,15 +2,17 @@
 
 **Research & Evidence Intelligence Platform**
 
-> **v0.2.4.2 — cadastro manual de evidências.** O runtime de produção é um Cloudflare Worker com
-> DeepSpace Auth e DeepSpace Records. O runtime Node com SQLite permanece para
-> desenvolvimento e testes. O app **não está publicado** e **não está registrado** na
-> plataforma — ver [docs/deployment.md](docs/deployment.md).
+> **v0.2.4.3 — internacionalização completa (en / pt-BR).** O runtime de produção é um
+> Cloudflare Worker com DeepSpace Auth e DeepSpace Records. O runtime Node com SQLite
+> permanece para desenvolvimento e testes. O app **não está publicado** e **não está
+> registrado** na plataforma — ver [docs/deployment.md](docs/deployment.md).
 >
-> A v0.2.4.2 acrescenta o cadastro manual de evidências na tela de evidências — sem Exa,
-> sem Gemini, sem nenhum serviço externo — e corrige a procedência: toda evidência era
-> gravada como `exa`, inclusive as digitadas à mão. Ver
-> [docs/changes-v0.2.4.2.md](docs/changes-v0.2.4.2.md).
+> A v0.2.4.3 traduz a interface inteira para inglês (padrão) e português do Brasil, com
+> catálogos tipados, formatação regional por `Intl` e preferência persistida. A mesma
+> versão endurece a superfície de ações: `/api/actions/*` passa a exigir Bearer Token,
+> `ActionTools` ganha `deleteWhere` e a resolução de nomes usa `lookupOwn`.
+> Ver [docs/audit-integrada-v0.2.4.3.md](docs/audit-integrada-v0.2.4.3.md) e, para a
+> proteção financeira, [docs/changes-v0.2.4.3.md](docs/changes-v0.2.4.3.md).
 
 O SignalMesh transforma informação dispersa em evidências organizadas, analisadas e
 validadas por pessoas. Não é um chatbot: é um ambiente de pesquisa onde toda conclusão

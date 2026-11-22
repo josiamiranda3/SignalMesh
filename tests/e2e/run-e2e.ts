@@ -153,6 +153,21 @@ async function main(): Promise<void> {
   const { page, close } = await Page.open({ width: 1440, height: 950 })
 
   try {
+    /**
+     * Pin the interface language.
+     *
+     * The product default is `en`, but this suite's assertions were written
+     * against the Portuguese copy (they predate the i18n work). Pinning `pt-BR`
+     * keeps every existing check meaningful instead of rewriting ~40 assertions
+     * to English — and the English interface is covered separately by
+     * `tests/e2e/audit-i18n-*.ts`, which assert both languages.
+     *
+     * The preference is read from localStorage at boot, so it must be set on the
+     * origin before the first render.
+     */
+    await page.goto(`${base}/`)
+    await page.evaluate(`window.localStorage.setItem('signalmess.locale', 'pt-BR')`)
+
     console.log('\n1. Landing e autenticação')
     await page.goto(`${base}/`)
     await page.waitForText('informação dispersa')

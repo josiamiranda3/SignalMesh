@@ -51,7 +51,7 @@ export function Breadcrumbs({ items }: { items: Array<{ label: string; to?: stri
             {item.to ? (
               <Link
                 to={item.to}
-                className="inline-flex min-h-9 items-center transition-colors hover:text-ink-muted"
+                className="inline-flex min-h-11 items-center transition-colors hover:text-ink-muted"
               >
                 {item.label}
               </Link>

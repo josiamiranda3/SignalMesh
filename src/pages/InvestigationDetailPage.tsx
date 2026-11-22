@@ -281,7 +281,7 @@ export default function InvestigationDetailPage() {
             </h2>
             <Link
               to={`/investigations/${id}/evidence`}
-              className="flex min-h-9 items-center gap-1 text-[0.75rem] text-ink-subtle transition-colors hover:text-ink"
+              className="flex min-h-11 items-center gap-1 text-[0.75rem] text-ink-subtle transition-colors hover:text-ink"
             >
               {t('dashboard.viewAll')}
               <ArrowRight className="size-3" aria-hidden />
@@ -332,7 +332,7 @@ export default function InvestigationDetailPage() {
             <h2 id="investigation-activity" className="text-[0.9375rem] font-semibold text-ink">
               {t('detail.activityTitle')}
             </h2>
-            <Link to="/history" className="inline-flex min-h-9 items-center text-[0.75rem] text-ink-subtle transition-colors hover:text-ink">
+            <Link to="/history" className="inline-flex min-h-11 min-w-11 items-center justify-center px-1 text-[0.75rem] text-ink-subtle transition-colors hover:text-ink">
               {t('nav.history')}
             </Link>
           </div>

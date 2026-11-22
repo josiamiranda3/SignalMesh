@@ -481,7 +481,7 @@
     "insufficientDescription": "The model explicitly stated that the available sources do not support strong conclusions. Read the limitations and gaps below before using this result.",
     "summaryTitle": "Executive summary",
     "summaryDescription": "Synthesis produced from the submitted evidence",
-    "findingsTitle": "Findings",
+    "findingsTitle": "Main findings",
     "findingsDescription": "Each item cites the evidence that supports it",
     "findingsEmpty": "No finding was presented — the model found insufficient support.",
     "summaryEmpty": "No summary returned.",

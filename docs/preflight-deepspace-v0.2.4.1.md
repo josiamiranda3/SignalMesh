@@ -13,15 +13,24 @@ tecnicamente apto (§9).
 
 | Item | Estado |
 | --- | --- |
-| Conta autenticada | **nenhuma** |
-| Identidade verificável | **não** — `auth whoami` retorna `not_authenticated` |
-| Sessão em disco (`~/.deepspace`) | **não existe** |
+| Sessão em disco (`~/.deepspace`) | **existe** — arquivos `session` e `token`, de 21/11/2026 |
+| Identidade verificável | **não nesta sessão** — o CLI falha ao renovar o token com `credential_unwritable` (EPERM): o diretório de credenciais não é gravável sob o confinamento |
 | App registrado | **não** — `DEEPSPACE_APP_ID` ainda é `__APP_ID__` |
-| Origem de código | **não reivindicada** |
-| Créditos / cobrança | **NÃO CONFIRMADO** — `app usage` exige sessão |
+| Origem de código | **não reivindicada** (nenhum remoto Git configurado) |
+| Créditos / cobrança | **NÃO CONFIRMADO** — `app usage` exige uma sessão renovável |
 
-Não há como confirmar identidade, titularidade, plano ou saldo sem sessão. Consultado apenas o
-necessário; nenhum token, cookie ou credencial foi lido ou registrado.
+> **Correção da auditoria de 22/11/2026.** A versão anterior desta tabela afirmava
+> "conta autenticada: nenhuma" e "sessão em disco: não existe". Isso está **incorreto**:
+> `~/.deepspace/` contém `session` e `token`, ambos datados de 21/11. O bloqueio real mudou
+> de natureza — não é ausência de sessão, é **permissão de escrita no diretório de
+> credenciais**. Nenhum comando autenticado completa porque o CLI tenta renovar o token
+> antes de enviar a requisição.
+>
+> Consequência prática: liberar a escrita em `~/.deepspace` é o primeiro passo, e ele é
+> reversível e não exige credencial nova.
+
+Não há como confirmar identidade, titularidade, plano ou saldo sem uma sessão renovável.
+Consultado apenas o necessário; nenhum token, cookie ou credencial foi lido ou registrado.
 
 ---
 
@@ -115,7 +124,15 @@ porque os demais são injetados no deploy.
 - **Auth:** `RecordRoom` recebe `{ ownerUserId: env.OWNER_USER_ID }`; a autorização é por JWT
   verificado. Nenhuma configuração adicional é exigida além dos bindings injetados.
 - **Records:** uma migration declarada (`tag = "v1"`, `new_sqlite_classes = ["AppRecordRoom"]`)
-  e o binding `RECORD_ROOMS`. As 8 collections têm `ownerId` `userBound` + `immutable`.
+  e o binding `RECORD_ROOMS`. As collections têm `ownerId` `userBound` + `immutable`.
+
+> **Correção da auditoria de 22/11/2026.** Esta seção afirmava "8 collections". O código tem
+> **10**: `users`, `investigations`, `evidence`, `analyses`, `validations`, `activity_logs`,
+> `usage_records`, `quota_reservations`, `research_queries` e `app_settings`
+> (`src/schemas.ts`). As duas últimas foram adicionadas depois deste documento e não foram
+> contabilizadas aqui; ambas seguem o mesmo endurecimento (`ownerId` `userBound` +
+> `immutable`). As referências a "8 collections" em `audit-v0.2.1.md` e `decisions.md`
+> descrevem corretamente o estado **daquela data** e foram mantidas como registro histórico.
 
 ---
 

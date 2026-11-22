@@ -149,8 +149,13 @@ export default {
       if (url.pathname.startsWith('/api/actions/')) {
         const actionApp = new Hono<AppEnv>()
         registerActionRoutes(actionApp, {
+          // Bearer only. This route is mounted outside `createApp`, so it never
+          // passes through `csrfGuard`; accepting a session cookie here would
+          // let any page cause a signed-in browser to POST to the privileged
+          // surface with an ambient credential. `resolveBearerIdentity` reads the
+          // Authorization header and nothing else.
           resolveCaller: async (request) => {
-            const resolved = await resolveIdentity(request, env, config)
+            const resolved = await resolveBearerIdentity(request, env, config)
             return resolved?.userId ?? null
           },
           environment: { OWNER_USER_ID: env.OWNER_USER_ID },
@@ -268,8 +273,6 @@ async function resolveIdentity(
   env: Env,
   config: ReturnType<typeof loadConfig>,
 ): Promise<{ userId: string } | null> {
-  const { verifyJwt } = await import('deepspace/worker')
-
   const header = request.headers.get('authorization')
   const bearer = header?.startsWith('Bearer ') ? header.slice(7).trim() : null
   const cookies = request.headers.get('cookie') ?? ''
@@ -281,6 +284,51 @@ async function resolveIdentity(
   const token = bearer ?? (cookieToken ? decodeURIComponent(cookieToken) : null)
   if (!token) return null
 
+  return verifyPlatformToken(token, env, config)
+}
+
+/**
+ * Bearer-only identity, for the privileged action surface.
+ *
+ * Identical verification to `resolveIdentity` — same `verifyJwt` call, same
+ * issuer, same `authorizedParties` — but the **only** accepted source is the
+ * `Authorization: Bearer` header.
+ *
+ * ## Why the action surface cannot accept a cookie
+ *
+ * `/api/actions/*` is mounted on its own Hono instance, before the app that
+ * carries `csrfGuard`. A cookie is an ambient credential: the browser attaches
+ * it to any request for this origin, including one a third-party page caused.
+ * With no CSRF middleware on this path, a cookie would be enough to drive a
+ * privileged write from another site. A bearer token is explicit — a
+ * cross-origin page cannot set the header without a preflight this app never
+ * grants, and cannot read the token to set it. Requiring it here restores the
+ * property the middleware would otherwise have provided.
+ */
+async function resolveBearerIdentity(
+  request: Request,
+  env: Env,
+  config: ReturnType<typeof loadConfig>,
+): Promise<{ userId: string } | null> {
+  const header = request.headers.get('authorization')
+  const bearer = header?.startsWith('Bearer ') ? header.slice(7).trim() : null
+  if (!bearer) return null
+
+  return verifyPlatformToken(bearer, env, config)
+}
+
+/**
+ * Verify a platform JWT.
+ *
+ * Shared by both resolution paths so the cryptographic policy — signature,
+ * issuer, expiry, `authorizedParties` — is written once and cannot drift between
+ * the general API and the privileged action surface.
+ */
+async function verifyPlatformToken(
+  token: string,
+  env: Env,
+  config: ReturnType<typeof loadConfig>,
+): Promise<{ userId: string } | null> {
   // The platform injects these; without them nothing can be verified.
   if (!env.AUTH_JWT_PUBLIC_KEY || !env.AUTH_JWT_ISSUER) return null
 

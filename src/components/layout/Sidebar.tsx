@@ -170,7 +170,7 @@ export function Sidebar({
               type="button"
               onClick={() => void signOut()}
               className={cn(
-                'flex size-8 items-center justify-center rounded-md text-ink-faint transition-colors hover:bg-white/5 hover:text-negative',
+                'flex size-11 items-center justify-center rounded-md text-ink-faint transition-colors hover:bg-white/5 hover:text-negative',
                 collapsed && 'lg:hidden',
               )}
               aria-label={t('common.signOut')}
@@ -182,7 +182,7 @@ export function Sidebar({
           <button
             type="button"
             onClick={() => setCollapsed((value) => !value)}
-            className="mt-2 hidden min-h-9 w-full items-center justify-center gap-2 rounded-md px-2 font-mono text-[0.625rem] uppercase tracking-[0.12em] text-ink-faint transition-colors hover:bg-white/5 hover:text-ink-muted lg:flex"
+            className="mt-2 hidden min-h-11 w-full items-center justify-center gap-2 rounded-md px-2 font-mono text-[0.625rem] uppercase tracking-[0.12em] text-ink-faint transition-colors hover:bg-white/5 hover:text-ink-muted lg:flex"
             aria-label={collapsed ? t('common.expandMenu') : t('common.collapseMenu')}
           >
             <ChevronsLeft
@@ -239,7 +239,8 @@ function NavItemLink({
       title={collapsed ? t(item.labelKey) : undefined}
       className={({ isActive }) =>
         cn(
-          'group relative flex items-center gap-2.5 rounded-md px-2 py-2 text-[0.8125rem] font-medium transition-colors',
+          // min-h-11: every navigation row is a 44px touch target on the rail.
+          'group relative flex min-h-11 items-center gap-2.5 rounded-md px-2 py-2 text-[0.8125rem] font-medium transition-colors',
           collapsed && 'lg:justify-center lg:px-0',
           isActive ? 'text-ink' : 'text-ink-subtle hover:bg-white/[0.035] hover:text-ink-muted',
         )
@@ -298,7 +299,9 @@ export function MobileHeader({ onOpenMenu }: { onOpenMenu: () => void }) {
         type="button"
         onClick={onOpenMenu}
         aria-label={t('common.openMenu')}
-        className="-ml-1 rounded-md p-2 text-ink-muted transition-colors hover:bg-white/5 hover:text-ink"
+        // 44x44 minimum: WCAG 2.5.8 targets a 24x24 CSS-px floor, but this is a
+        // primary navigation control on touch, so it gets the comfortable size.
+        className="-ml-1 flex size-11 items-center justify-center rounded-md text-ink-muted transition-colors hover:bg-white/5 hover:text-ink"
       >
         <Menu className="size-5" aria-hidden />
       </button>

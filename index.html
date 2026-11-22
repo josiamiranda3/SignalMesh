@@ -1,10 +1,23 @@
 <!doctype html>
-<html lang="pt-BR">
+<html lang="en">
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <meta name="color-scheme" content="dark" />
     <meta name="theme-color" content="#07090f" />
+    <!--
+      Private application: no route may be indexed.
+
+      This is one shell for every route, so a global directive is the only
+      correct scope — per-page metadata would require prerendering, which this
+      build does not do. `noindex` keeps the page *crawlable* (a crawler must be
+      able to fetch it to read the directive) while forbidding it from appearing
+      in results; public/robots.txt adds `Disallow: /` on top.
+
+      Revisit only together with a real public-page strategy — see
+      docs/preflight-deepspace-v0.2.4.1.md.
+    -->
+    <meta name="robots" content="noindex, nofollow" />
     <title>SignalMesh — Research &amp; Evidence Intelligence</title>
     <meta
       name="description"

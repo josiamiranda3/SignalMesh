@@ -28,7 +28,7 @@ export default function LandingPage() {
   return (
     <div className="relative z-10 min-h-screen">
       <header className="mx-auto flex h-[4.5rem] max-w-6xl items-center justify-between px-6">
-        <Link to="/" className="flex min-h-9 items-center gap-2.5" aria-label={t('landing.homeAria')}>
+        <Link to="/" className="flex min-h-11 items-center gap-2.5" aria-label={t('landing.homeAria')}>
           <Logo size={26} />
           <Wordmark className="text-[0.9375rem]" />
         </Link>
@@ -38,7 +38,7 @@ export default function LandingPage() {
           </span>
           <Link
             to="/login"
-            className="ml-2 inline-flex h-9 items-center gap-1.5 rounded-md border border-hairline-strong bg-raised px-4 text-[0.8125rem] font-medium text-ink transition-colors hover:border-hairline-strong hover:bg-overlay"
+            className="ml-2 inline-flex h-11 items-center gap-1.5 rounded-md border border-hairline-strong bg-raised px-4 text-[0.8125rem] font-medium text-ink transition-colors hover:border-hairline-strong hover:bg-overlay"
           >
             {t('landing.signIn')}
             <ArrowRight className="size-3.5" aria-hidden />

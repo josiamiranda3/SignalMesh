@@ -218,7 +218,7 @@ export default function HistoryPage() {
                                 <Link
                                   to={`/investigations/${entry.investigationId}`}
                                   onClick={(event) => event.stopPropagation()}
-                                  className="ml-2 inline-flex min-h-6 items-center text-ink-subtle underline decoration-hairline-strong underline-offset-2 transition-colors hover:text-ink"
+                                  className="ml-2 inline-flex min-h-11 items-center text-ink-subtle underline decoration-hairline-strong underline-offset-2 transition-colors hover:text-ink"
                                 >
                                   {t('history.viewInvestigation')}
                                 </Link>
