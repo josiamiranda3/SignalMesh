@@ -1,3 +1,4 @@
+
 import { describe, it } from 'node:test'
 import assert from 'node:assert/strict'
 import { readFileSync } from 'node:fs'
@@ -6,22 +7,14 @@ import { join } from 'node:path'
 /**
  * Worker routing contract.
  *
- * ## Why this suite reads the source
+ * This suite validates:
+ * - Wrangler routing configuration.
+ * - SPA route coverage.
+ * - Existing platform route preservation.
+ * - Worker fallback decisions.
  *
- * The Worker cannot be instantiated here: `workerd` crashes with
- * `std::terminate()` on this machine (see docs/testing.md §4.19), and the Worker
- * imports `deepspace/worker`, which needs the platform runtime. There is no way
- * to *execute* `worker.ts`'s fetch handler in this environment without stubbing
- * the entire platform.
- *
- * So this suite does what it can honestly do: it asserts the **routing
- * decisions** in the source, and it executes the equivalent branching logic
- * against a fake ASSETS binding — which is what actually distinguishes "SPA
- * shell" from "404". It does not claim the Worker runs.
- *
- * The alternative — a test that mocks `deepspace/worker` wholesale — would
- * assert a stub, which is exactly the "mock presented as integration" failure
- * mode this project forbids.
+ * It does not claim to execute the actual Cloudflare Worker.
+ * The real deployment routing must be validated in production.
  */
 
 const ROOT = process.cwd()
@@ -30,159 +23,383 @@ function read(path: string): string {
   return readFileSync(join(ROOT, path), 'utf8')
 }
 
+/**
+ * Extract run_worker_first from wrangler.toml.
+ *
+ * The array is multiline and contains quoted route patterns.
+ */
+function readRunWorkerFirst(toml: string): string[] {
+  const match = /run_worker_first\s*=\s*\[([\s\S]*?)\]/m.exec(toml)
+
+  if (!match) return []
+
+  return [...match[1]!.matchAll(/"([^"]+)"/g)]
+    .map((entry) => entry[1]!)
+}
+
+/**
+ * Mirror of the route matcher used by this test.
+ *
+ * Both bare paths and wildcard paths are explicitly configured.
+ * The wildcard matcher covers the base and its subroutes.
+ */
+function covered(pathname: string, rules: string[]): boolean {
+  return rules.some((rule) => {
+    if (!rule.endsWith('/*')) {
+      return pathname === rule
+    }
+
+    const base = rule.slice(0, -2)
+
+    return pathname === base || pathname.startsWith(`${base}/`)
+  })
+}
+
+/**
+ * Required SPA routes.
+ *
+ * Bare routes and subroutes are declared separately in the TOML
+ * to avoid depending on wildcard base-path behavior.
+ */
+const SPA_ROUTES = [
+  '/login',
+  '/dashboard',
+  '/investigations',
+  '/validation',
+  '/history',
+  '/settings',
+]
+
+const SPA_SUBROUTES = [
+  '/dashboard/*',
+  '/investigations/*',
+  '/validation/*',
+  '/history/*',
+  '/settings/*',
+]
+
+const PLATFORM_ROUTES = [
+  '/api/*',
+  '/ws/*',
+  '/internal/*',
+  '/v1/*',
+  '/_deepspace/*',
+  '/llms.txt',
+  '/llms-full.txt',
+  '/.well-known/mcp',
+  '/.well-known/mcp.json',
+  '/.well-known/mcp/*',
+]
+
 describe('wrangler routing configuration', () => {
   const toml = read('wrangler.toml')
 
-  it('sets not_found_handling = "none" so the Worker owns 404s', () => {
+  it('sets not_found_handling = "none" so the Worker owns missing paths', () => {
     assert.match(toml, /not_found_handling\s*=\s*"none"/)
   })
 
-  /**
-   * The SPA deep-link regression.
-   *
-   * `worker.ts` does `const asset = await env.ASSETS.fetch(request)` and returns
-   * anything that is not a 404. Cloudflare's default `html_handling`
-   * (`auto-trailing-slash`) turns a navigation for a path with no matching file
-   * into `/index.html`, canonicalised to `/` with a **307**. That 307 satisfied
-   * `!== 404`, so it was handed to the browser verbatim and the Worker's own SPA
-   * fallback never ran: `/login`, `/history`, `/settings` all landed on `/`.
-   *
-   * `html_handling = "none"` makes the asset layer answer a real 404, which is
-   * what the fallback expects.
-   */
-  it('sets html_handling = "none" so deep links are not 307-redirected by the asset layer', () => {
-    assert.match(
+  it('does not depend on html_handling for SPA routing', () => {
+    assert.doesNotMatch(
       toml,
-      /html_handling\s*=\s*"none"/,
-      'without html_handling = "none" the asset layer answers a 307 for unknown paths',
+      /^\s*html_handling\s*=/m,
+      'html_handling is not forwarded by the current DeepSpace deployment mapper',
     )
   })
 
-  it('keeps every other [assets] setting intact', () => {
-    // This change adds one key; it must not drop or alter the rest.
-    assert.match(toml, /directory\s*=\s*"dist"/)
-    assert.match(toml, /binding\s*=\s*"ASSETS"/)
-    assert.match(toml, /not_found_handling\s*=\s*"none"/)
-    assert.match(toml, /run_worker_first\s*=\s*\[/)
+  it('keeps every required [assets] setting intact', () => {
+    assert.match(toml, /^\s*directory\s*=\s*"dist"/m)
+    assert.match(toml, /^\s*binding\s*=\s*"ASSETS"/m)
+    assert.match(toml, /^\s*not_found_handling\s*=\s*"none"/m)
+    assert.match(toml, /^\s*run_worker_first\s*=\s*\[/m)
   })
 
-  it('declares html_handling inside the [assets] block, not elsewhere', () => {
+  it('declares run_worker_first inside the [assets] section', () => {
     const lines = toml.split('\n')
-    const assetsAt = lines.findIndex((l) => l.trim() === '[assets]')
+
+    const assetsAt = lines.findIndex(
+      (line) => line.trim() === '[assets]',
+    )
+
     assert.ok(assetsAt >= 0, '[assets] section not found')
 
-    // Find the next section header after [assets]; the key must sit before it.
-    const nextSection = lines.findIndex((l, i) => i > assetsAt && /^\s*\[/.test(l))
+    const nextSection = lines.findIndex(
+      (line, index) =>
+        index > assetsAt && /^\s*\[/.test(line),
+    )
+
     const end = nextSection === -1 ? lines.length : nextSection
 
-    const keyLine = lines.findIndex((l, i) => i > assetsAt && i < end && /^\s*html_handling\s*=/.test(l))
-    assert.ok(keyLine > assetsAt && keyLine < end, 'html_handling must be declared inside [assets]')
-  })
-
-  it('uses a value wrangler accepts', () => {
-    // wrangler's schema: auto-trailing-slash | force-trailing-slash |
-    // drop-trailing-slash | none
-    const match = /html_handling\s*=\s*"([^"]+)"/.exec(toml)
-    assert.ok(match, 'html_handling not found')
-    assert.ok(
-      ['auto-trailing-slash', 'force-trailing-slash', 'drop-trailing-slash', 'none'].includes(match[1]!),
-      `unsupported html_handling: ${match[1]}`,
+    const keyLine = lines.findIndex(
+      (line, index) =>
+        index > assetsAt &&
+        index < end &&
+        /^\s*run_worker_first\s*=/.test(line),
     )
-  })
 
-  it('routes API and socket prefixes to the worker before the asset layer', () => {
-    assert.match(toml, /run_worker_first\s*=\s*\[/)
-    const line = toml.split('\n').find((l) => l.includes('run_worker_first')) ?? ''
-    for (const prefix of ['/api/*', '/ws/*']) {
-      assert.ok(line.includes(prefix), `${prefix} must run worker-first, or it can fall through to the SPA shell`)
-    }
+    assert.ok(
+      keyLine > assetsAt && keyLine < end,
+      'run_worker_first must be declared inside [assets]',
+    )
   })
 
   it('binds the built SPA directory', () => {
     assert.match(toml, /directory\s*=\s*"dist"/)
     assert.match(toml, /binding\s*=\s*"ASSETS"/)
   })
+
+  it('preserves the Durable Object configuration', () => {
+    assert.match(toml, /class_name\s*=\s*"AppRecordRoom"/)
+    assert.match(toml, /name\s*=\s*"RECORD_ROOMS"/)
+  })
 })
 
-describe('worker fetch routing branches', () => {
+describe('run_worker_first configuration', () => {
+  const toml = read('wrangler.toml')
+  const rules = readRunWorkerFirst(toml)
+
+  it('parses the route list', () => {
+    assert.ok(
+      rules.length > 0,
+      'run_worker_first must contain route patterns',
+    )
+  })
+
+  it('contains only well-formed route patterns', () => {
+    const malformed = rules.filter(
+      (rule) => !rule.startsWith('/') && !rule.startsWith('!/'),
+    )
+
+    assert.deepEqual(
+      malformed,
+      [],
+      `Malformed rules: ${malformed.join(', ')}`,
+    )
+  })
+
+  it('does not introduce negative routing rules', () => {
+    const negatives = rules.filter((rule) => rule.startsWith('!/'))
+
+    assert.deepEqual(
+      negatives,
+      [],
+      `Unexpected negative rules: ${negatives.join(', ')}`,
+    )
+  })
+
+  it('contains every SPA entry route', () => {
+    for (const route of SPA_ROUTES) {
+      assert.ok(
+        rules.includes(route),
+        `${route} must be explicitly configured`,
+      )
+    }
+  })
+
+  it('contains every SPA subroute pattern', () => {
+    for (const route of SPA_SUBROUTES) {
+      assert.ok(
+        rules.includes(route),
+        `${route} must be explicitly configured`,
+      )
+    }
+  })
+
+  it('covers all SPA routes', () => {
+    for (const route of SPA_ROUTES) {
+      assert.equal(
+        covered(route, rules),
+        true,
+        `${route} must reach the Worker`,
+      )
+    }
+  })
+
+  it('covers SPA subroutes', () => {
+    const routes = [
+      '/dashboard/overview',
+      '/dashboard/projects',
+      '/investigations/new',
+      '/investigations/inv_123/evidence',
+      '/validation/xyz',
+      '/history/2026',
+      '/history/2026/11',
+      '/settings/limits',
+      '/settings/profile',
+    ]
+
+    for (const route of routes) {
+      assert.equal(
+        covered(route, rules),
+        true,
+        `${route} must reach the Worker`,
+      )
+    }
+  })
+
+  it('preserves all existing platform routes', () => {
+    for (const route of PLATFORM_ROUTES) {
+      assert.ok(
+        rules.includes(route),
+        `${route} must be preserved`,
+      )
+    }
+  })
+
+  it('keeps platform routes before SPA routes', () => {
+    const firstSpaIndex = rules.indexOf('/login')
+
+    assert.ok(firstSpaIndex >= 0)
+
+    for (const route of PLATFORM_ROUTES) {
+      assert.ok(
+        rules.indexOf(route) >= 0 &&
+          rules.indexOf(route) < firstSpaIndex,
+        `${route} must remain before SPA routes`,
+      )
+    }
+  })
+
+  it('does not use a global wildcard', () => {
+    assert.ok(!rules.includes('/*'))
+    assert.ok(!rules.includes('*'))
+  })
+
+  it('does not route static assets through SPA patterns', () => {
+    const assets = [
+      '/assets/index-abc123.js',
+      '/assets/index-abc123.css',
+      '/assets/logo.svg',
+      '/favicon.svg',
+      '/robots.txt',
+      '/missing.png',
+    ]
+
+    for (const asset of assets) {
+      assert.equal(
+        covered(asset, rules),
+        false,
+        `${asset} must remain outside SPA route patterns`,
+      )
+    }
+  })
+})
+
+describe('Worker fetch routing branches', () => {
   const source = read('worker.ts')
 
-  it('claims /ws/* before anything else', () => {
-    const wsIndex = source.indexOf("url.pathname.startsWith('/ws/')")
-    const apiIndex = source.indexOf("url.pathname.startsWith('/api/')")
-    const assetIndex = source.indexOf('env.ASSETS.fetch(request)')
-    assert.ok(wsIndex > 0 && apiIndex > 0 && assetIndex > 0)
-    assert.ok(wsIndex < apiIndex, '/ws/* must be decided before /api/*')
-    assert.ok(apiIndex < assetIndex, '/api/* must be decided before the asset layer')
+  it('handles WebSocket routes before API and asset handling', () => {
+    const wsIndex = source.indexOf(
+      "url.pathname.startsWith('/ws/')",
+    )
+
+    const apiIndex = source.indexOf(
+      "url.pathname.startsWith('/api/')",
+    )
+
+    const assetIndex = source.indexOf(
+      'env.ASSETS.fetch(request)',
+    )
+
+    assert.ok(wsIndex >= 0, 'WebSocket routing not found')
+    assert.ok(apiIndex >= 0, 'API routing not found')
+    assert.ok(assetIndex >= 0, 'Assets routing not found')
+
+    assert.ok(wsIndex < apiIndex)
+    assert.ok(apiIndex < assetIndex)
   })
 
-  it('returns 404 for a missing file instead of the SPA shell', () => {
-    // The guard: a path whose last segment contains a dot is a file request.
-    assert.match(source, /last\.includes\('\.'\)/)
-    assert.match(source, /status:\s*404/)
+  it('returns 404 for missing file requests', () => {
+    assert.ok(
+      source.includes("last.includes('.')"),
+      'Worker must identify file-like paths',
+    )
+
+    assert.match(source, /status\s*:\s*404/)
   })
 
-  it('serves the SPA shell for a client route without a file extension', () => {
-    assert.match(source, /shellUrl\.pathname\s*=\s*'\/index\.html'/)
+  it('serves the SPA shell through index.html', () => {
+    assert.ok(
+      source.includes("shellUrl.pathname = '/index.html'"),
+      'Worker must resolve the SPA shell',
+    )
   })
 
-  it('never answers an /api/* request with the SPA shell', () => {
-    // The asset fallback must sit lexically after the /api/ return.
-    const apiReturn = source.indexOf("if (url.pathname.startsWith('/api/'))")
-    const shell = source.indexOf("shellUrl.pathname = '/index.html'")
-    assert.ok(apiReturn < shell)
-    // And the /api/ branch must return, not fall through.
-    const apiBlock = source.slice(apiReturn, source.indexOf('// Static assets and SPA fallback'))
-    assert.match(apiBlock, /return app\.fetch/)
+  it('does not let API requests fall through to the SPA shell', () => {
+    const apiIndex = source.indexOf(
+      "if (url.pathname.startsWith('/api/'))",
+    )
+
+    const shellIndex = source.indexOf(
+      "shellUrl.pathname = '/index.html'",
+    )
+
+    assert.ok(apiIndex >= 0)
+    assert.ok(shellIndex >= 0)
+    assert.ok(apiIndex < shellIndex)
+
+    const apiBlock = source.slice(
+      apiIndex,
+      source.indexOf('// Static assets and SPA fallback', apiIndex),
+    )
+
+    assert.match(apiBlock, /return\s+app\.fetch/)
   })
 })
 
 /**
- * Execute the fallback decision with a fake ASSETS binding.
+ * Simulates the Worker fallback using a fake ASSETS binding.
  *
- * This mirrors `worker.ts`'s tail exactly: ask ASSETS; if not 404, serve it; if
- * it *is* 404 and the path looks like a file, answer JSON 404; otherwise serve
- * the shell. It is a re-implementation, so it does not prove `worker.ts` is
- * correct — it proves the *rule* is correct, and the source assertions above
- * tie the rule to the code.
- *
- * `assetMode` models the two `html_handling` configurations, because that is
- * exactly what this fix changes:
- *
- *  - `none`  — an unknown path answers **404**, so the Worker's fallback runs.
- *  - `auto`  — Cloudflare's default: an unknown *navigation* is rewritten to
- *              `/index.html` and canonicalised to `/` with a **307**. The Worker's
- *              `!== 404` guard passes that through, so the fallback never runs.
+ * This validates the fallback decision after a request reaches
+ * the Worker. It does not simulate Cloudflare run_worker_first.
  */
 function decide(
   pathname: string,
   assets: Map<string, string>,
-  assetMode: 'none' | 'auto' = 'none',
-): { status: number; body: string; shell: boolean; redirected?: string } {
+): {
+  status: number
+  body: string
+  shell: boolean
+} {
   const hit = assets.get(pathname)
-  if (hit !== undefined) return { status: 200, body: hit, shell: false }
 
-  // The asset layer's own normalisation, before the Worker's logic sees anything.
-  if (assetMode === 'auto') {
-    const last = pathname.slice(pathname.lastIndexOf('/') + 1)
-    // A file-like path still 404s; a route-like path is redirected to `/`.
-    if (!last.includes('.')) {
-      return { status: 307, body: '', shell: false, redirected: '/' }
+  if (hit !== undefined) {
+    return {
+      status: 200,
+      body: hit,
+      shell: false,
     }
-    return { status: 404, body: JSON.stringify({ error: 'not_found' }), shell: false }
   }
 
-  const last = pathname.slice(pathname.lastIndexOf('/') + 1)
-  if (last.includes('.')) {
-    return { status: 404, body: JSON.stringify({ error: 'not_found' }), shell: false }
+  const lastSegment = pathname.slice(
+    pathname.lastIndexOf('/') + 1,
+  )
+
+  if (lastSegment.includes('.')) {
+    return {
+      status: 404,
+      body: JSON.stringify({ error: 'not_found' }),
+      shell: false,
+    }
   }
 
   const shell = assets.get('/index.html')
-  if (shell === undefined) return { status: 404, body: '', shell: false }
-  return { status: 200, body: shell, shell: true }
+
+  if (shell === undefined) {
+    return {
+      status: 404,
+      body: '',
+      shell: false,
+    }
+  }
+
+  return {
+    status: 200,
+    body: shell,
+    shell: true,
+  }
 }
 
-describe('SPA fallback rule (executed against a fake ASSETS binding)', () => {
+describe('SPA fallback rule', () => {
   const assets = new Map<string, string>([
     ['/index.html', '<!doctype html><title>SignalMesh</title>'],
     ['/assets/app.js', 'console.log(1)'],
@@ -190,108 +407,106 @@ describe('SPA fallback rule (executed against a fake ASSETS binding)', () => {
     ['/robots.txt', 'User-agent: *'],
   ])
 
-  it('serves a deep client route after a refresh', () => {
-    const result = decide('/investigations/inv_123/evidence', assets)
+  it('serves a deep client route after refresh', () => {
+    const result = decide(
+      '/investigations/inv_123/evidence',
+      assets,
+    )
+
+    assert.equal(result.status, 200)
+    assert.equal(result.shell, true)
+  })
+
+  it('serves the login route', () => {
+    const result = decide('/login', assets)
+
     assert.equal(result.status, 200)
     assert.equal(result.shell, true)
   })
 
   it('serves the root route', () => {
-    assert.equal(decide('/', assets).shell, true)
+    const result = decide('/', assets)
+
+    assert.equal(result.status, 200)
+    assert.equal(result.shell, true)
   })
 
-  it('404s an asset that does not exist', () => {
-    const result = decide('/assets/deleted-chunk-abc123.js', assets)
+  it('serves every configured SPA route', () => {
+    for (const route of SPA_ROUTES) {
+      const result = decide(route, assets)
+
+      assert.equal(
+        result.status,
+        200,
+        `${route} must return 200`,
+      )
+
+      assert.equal(
+        result.shell,
+        true,
+        `${route} must receive the SPA shell`,
+      )
+    }
+  })
+
+  it('serves SPA subroutes', () => {
+    const routes = [
+      '/dashboard/overview',
+      '/investigations/new',
+      '/validation/xyz',
+      '/history/2026',
+      '/settings/limits',
+    ]
+
+    for (const route of routes) {
+      const result = decide(route, assets)
+
+      assert.equal(result.status, 200, route)
+      assert.equal(result.shell, true, route)
+    }
+  })
+
+  it('returns 404 for a missing JavaScript asset', () => {
+    const result = decide(
+      '/assets/deleted-chunk-abc123.js',
+      assets,
+    )
+
     assert.equal(result.status, 404)
     assert.equal(result.shell, false)
   })
 
-  it('404s a missing file at the root', () => {
+  it('returns 404 for a missing root file', () => {
     const result = decide('/missing.png', assets)
+
     assert.equal(result.status, 404)
     assert.equal(result.shell, false)
   })
 
-  it('serves an existing asset unchanged', () => {
+  it('serves existing assets unchanged', () => {
     const result = decide('/assets/app.js', assets)
+
     assert.equal(result.status, 200)
     assert.equal(result.body, 'console.log(1)')
     assert.equal(result.shell, false)
   })
 
-  it('serves an existing root file unchanged', () => {
-    assert.equal(decide('/robots.txt', assets).body, 'User-agent: *')
-    assert.equal(decide('/favicon.svg', assets).body, '<svg/>')
+  it('serves existing root files unchanged', () => {
+    assert.equal(
+      decide('/robots.txt', assets).body,
+      'User-agent: *',
+    )
+
+    assert.equal(
+      decide('/favicon.svg', assets).body,
+      '<svg/>',
+    )
   })
 
-  it('does not treat a route with a dot in a segment as a file when it has none in the last segment', () => {
-    // `/v1.2/investigations` — dot in an earlier segment, clean last segment.
-    assert.equal(decide('/v1.2/investigations', assets).shell, true)
-  })
-})
+  it('does not treat a dot in an earlier segment as a file extension', () => {
+    const result = decide('/v1.2/investigations', assets)
 
-/**
- * Regression: the deep-link 307.
- *
- * This is the test that would have caught the production defect. With the
- * Cloudflare default (`auto`), the asset layer answers **307 → /** for an
- * unknown route, and the Worker's `!== 404` guard passes it straight through. The
- * SPA shell is therefore never served on a hard load, and the user lands on the
- * landing page instead of the requested route.
- */
-describe('deep links are not 307-redirected (html_handling = "none")', () => {
-  const assets = new Map<string, string>([
-    ['/index.html', '<!doctype html><title>SignalMesh</title>'],
-    ['/assets/app.js', 'console.log(1)'],
-  ])
-
-  const ROUTES = ['/login', '/history', '/settings', '/dashboard', '/investigations', '/validation']
-
-  it('every SPA route is served the shell, not a redirect', () => {
-    for (const route of ROUTES) {
-      const result = decide(route, assets, 'none')
-      assert.equal(result.status, 200, `${route} must be served, not redirected`)
-      assert.equal(result.shell, true, `${route} must get the SPA shell`)
-      assert.equal(result.redirected, undefined, `${route} must not redirect`)
-    }
-  })
-
-  it('the previous configuration would have redirected them (documents the defect)', () => {
-    // With `auto` (the old behaviour) the same routes 307 to `/`. Asserted so the
-    // regression is recorded, not merely described.
-    for (const route of ROUTES) {
-      const result = decide(route, assets, 'auto')
-      assert.equal(result.status, 307, `${route} would have been redirected under auto-trailing-slash`)
-      assert.equal(result.redirected, '/', `${route} would have been redirected to /`)
-      assert.equal(result.shell, false)
-    }
-  })
-
-  it('static files are still served unchanged in both modes', () => {
-    for (const mode of ['none', 'auto'] as const) {
-      const result = decide('/assets/app.js', assets, mode)
-      assert.equal(result.status, 200, mode)
-      assert.equal(result.body, 'console.log(1)', mode)
-      assert.equal(result.shell, false, mode)
-    }
-  })
-
-  it('a missing asset still 404s in both modes', () => {
-    for (const mode of ['none', 'auto'] as const) {
-      const result = decide('/assets/deleted-chunk-abc.js', assets, mode)
-      assert.equal(result.status, 404, mode)
-      assert.notEqual(result.status, 307, `${mode}: a missing file must not redirect`)
-    }
-  })
-
-  it('the Worker never forwards a 307 for a route-shaped path', () => {
-    // The guard under test: `if (asset.status !== 404) return asset`.
-    // A 307 is "not 404", so it would be forwarded. `html_handling = "none"` is
-    // what prevents the asset layer from producing one in the first place.
-    const forwarded = decide('/login', assets, 'auto')
-    assert.equal(forwarded.status, 307, 'auto mode produces a 307 that the Worker forwards')
-
-    const fixed = decide('/login', assets, 'none')
-    assert.equal(fixed.status, 200, 'none mode produces a 404 the Worker turns into the shell')
+    assert.equal(result.status, 200)
+    assert.equal(result.shell, true)
   })
 })

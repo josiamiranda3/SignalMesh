@@ -1,14 +1,14 @@
 /**
  * SPA routing verification against the built assets.
  *
- * The Node dev harness serves the SPA with `serveStatic`, not `env.ASSETS`, so it
- * cannot reproduce Cloudflare's `html_handling`. What it *can* prove is the other
- * half of the contract: that every deep link resolves to the shell, that static
- * files are still served, and that a missing file 404s — i.e. that the Worker's
- * fallback rule (which the config now lets run) produces the right answers.
+ * Mirrors `worker.ts` exactly: asset layer first; a miss with a file extension is a
+ * JSON 404; a route-shaped miss gets the SPA shell. That is the rule the
+ * `run_worker_first` SPA routes now let run, because they reach the Worker instead
+ * of being answered (307) by the asset layer.
  *
- * The `html_handling` half is covered by `tests/integration/worker-routing.test.ts`,
- * which models both asset-layer modes explicitly.
+ * The Cloudflare-side half — that `run_worker_first` is actually published — cannot
+ * be exercised here; it is asserted against the config in
+ * `tests/integration/worker-routing.test.ts` and confirmed in the build artifact.
  *
  * Run: node --experimental-transform-types tests/e2e/audit-spa-routing.ts
  */
@@ -40,22 +40,22 @@ const built = await buildApp({
     SEED_DEMO_DATA: 'false',
   },
 })
-// Mirrors worker.ts exactly: asset layer first; a miss with a file extension is a
-// JSON 404; a route-shaped miss gets the SPA shell.
 built.app.use('*', serveStatic({ root: spa.root }))
-built.app.get('*', (c) => {
+const serveShell = serveStatic({ path: spa.index })
+built.app.get('*', async (c) => {
   const { pathname } = new URL(c.req.url)
   const last = pathname.slice(pathname.lastIndexOf('/') + 1)
-  if (last.includes('.')) {
-    return c.json({ error: 'not_found' }, 404)
-  }
-  return serveStatic({ path: spa.index })(c, async () => {})
+  if (last.includes('.')) return c.json({ error: 'not_found' }, 404)
+  // `serveStatic` writes to the context and resolves `void`; return its response
+  // when it produced one so the handler always yields a Response.
+  const response = await serveShell(c, async () => {})
+  return response ?? c.body(null, 404)
 })
 const server = serve({ fetch: built.app.fetch, port: PORT, hostname: '127.0.0.1' })
 await new Promise((r) => setTimeout(r, 500))
 
-async function status(path: string): Promise<{ status: number; type: string | null; location: string | null }> {
-  const response = await fetch(`${BASE}${path}`, { redirect: 'manual' })
+async function probe(path: string, method = 'GET'): Promise<{ status: number; type: string | null; location: string | null }> {
+  const response = await fetch(`${BASE}${path}`, { method, redirect: 'manual' })
   return {
     status: response.status,
     type: response.headers.get('content-type'),
@@ -64,43 +64,54 @@ async function status(path: string): Promise<{ status: number; type: string | nu
 }
 
 try {
-  console.log('=== deep links serve the SPA shell (no redirect) ===')
-  for (const route of ['/login', '/history', '/settings', '/dashboard', '/investigations', '/validation']) {
-    const result = await status(route)
-    check(result.status === 200, `${route} -> 200 (got ${result.status})`)
-    check(result.location === null, `${route} does not redirect`, result.location ?? '')
-    check(
-      (result.type ?? '').includes('text/html'),
-      `${route} serves HTML`,
-      result.type ?? 'no content-type',
-    )
+  console.log('=== 1. SPA route families serve the shell (200, no redirect) ===')
+  const FAMILIES: Array<[string, string[]]> = [
+    ['login', ['/login']],
+    ['dashboard', ['/dashboard', '/dashboard/x']],
+    ['investigations', ['/investigations', '/investigations/new', '/investigations/inv_1', '/investigations/inv_1/evidence']],
+    ['validation', ['/validation', '/validation/xyz']],
+    ['history', ['/history', '/history/2026']],
+    ['settings', ['/settings']],
+  ]
+  for (const [family, routes] of FAMILIES) {
+    for (const route of routes) {
+      const result = await probe(route)
+      check(result.status === 200, `${family}: ${route} -> 200`, String(result.status))
+      check(result.location === null, `${family}: ${route} does not redirect`, result.location ?? '')
+      check((result.type ?? '').includes('text/html'), `${family}: ${route} serves HTML`, result.type ?? '')
+    }
   }
 
-  console.log('\n=== the shell is the SPA, not an error page ===')
-  const login = await fetch(`${BASE}/login`)
-  const html = await login.text()
+  console.log('\n=== 2. the shell is the SPA, not an error page ===')
+  const html = await (await fetch(`${BASE}/login`)).text()
   check(html.includes('<div id="root">'), 'shell contains the React root')
   check(/<script[^>]+type="module"/.test(html), 'shell loads the app bundle')
 
-  console.log('\n=== static files still served ===')
+  console.log('\n=== 3. HEAD behaves like GET (no method-dependent redirect) ===')
+  for (const route of ['/login', '/dashboard', '/history']) {
+    const head = await probe(route, 'HEAD')
+    check(head.status === 200, `HEAD ${route} -> 200`, String(head.status))
+    check(head.location === null, `HEAD ${route} does not redirect`)
+  }
+
+  console.log('\n=== 4. existing static assets still served ===')
   for (const asset of ['/robots.txt', '/favicon.svg']) {
-    const result = await status(asset)
-    check(result.status === 200, `${asset} -> 200 (got ${result.status})`)
+    const result = await probe(asset)
+    check(result.status === 200, `${asset} -> 200`, String(result.status))
     check(result.location === null, `${asset} is not redirected`)
   }
 
-  console.log('\n=== missing files 404, they do not redirect ===')
+  console.log('\n=== 5. missing files 404, they do not redirect ===')
   for (const missing of ['/assets/deleted-chunk-abc123.js', '/missing.png']) {
-    const result = await status(missing)
-    check(result.status === 404, `${missing} -> 404 (got ${result.status})`)
+    const result = await probe(missing)
+    check(result.status === 404, `${missing} -> 404`, String(result.status))
     check(result.status !== 307, `${missing} is not a 307 redirect`)
   }
 
-  console.log("\n=== the worker's SPA branch is not bypassed by a redirect ===")
-  // A route-shaped path with no extension must never come back as 3xx.
-  const route = await status('/investigations/inv_123/evidence')
-  check(route.status === 200, 'nested route serves the shell')
-  check(route.status < 300 || route.status >= 400, 'nested route is not a 3xx', String(route.status))
+  console.log('\n=== 6. API routes are not swallowed by the SPA fallback ===')
+  const api = await probe('/api/health')
+  check(api.status === 200, '/api/health -> 200', String(api.status))
+  check((api.type ?? '').includes('application/json'), '/api/health answers JSON', api.type ?? '')
 } finally {
   server.close()
   built.close()

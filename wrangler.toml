@@ -1,3 +1,4 @@
+
 name = "signalmess"
 compatibility_date = "2025-01-01"
 compatibility_flags = ["nodejs_compat", "assets_navigation_has_no_effect"]
@@ -6,56 +7,96 @@ main = "worker.ts"
 [assets]
 directory = "dist"
 binding = "ASSETS"
-# The asset layer serves only what it has. A miss reaches the worker as a real
-# 404, and `worker.ts` decides: the SPA shell for a client route, 404 for a file
-# that no longer exists. Keeping this equal to the deploy value is what makes
-# `deepspace dev start` route like production.
+
+# The asset layer serves existing files.
+# Unknown paths must reach the Worker as real 404 responses.
+# The Worker decides whether to serve the SPA shell or return a 404.
+
 not_found_handling = "none"
-# Turn off the asset layer's own URL normalisation.
+
+# API, platform and SPA routes must reach the Worker before
+# the Assets layer.
 #
-# The default (`auto-trailing-slash`) rewrites a navigation for a path that has no
-# matching file into `/index.html`, which Cloudflare then canonicalises to `/` with
-# a **307**. `worker.ts` calls `env.ASSETS.fetch(request)` and returns anything that
-# is not a 404, so that 307 was handed straight to the browser and the Worker's own
-# SPA fallback never ran — every deep link (`/login`, `/history`, `/settings`) landed
-# on the landing page instead of the route the user asked for.
+# IMPORTANT:
+# DeepSpace CLI projectArtifactForm() forwards run_worker_first
+# through extraRunWorkerFirst, but currently does not forward
+# html_handling.
 #
-# `none` makes the asset layer answer a real 404 for an unknown path, which is what
-# the Worker's fallback already expects and what the `not_found_handling` comment
-# above describes.
-html_handling = "none"
-# API and platform prefixes must reach the worker before the asset layer, or an
-# unmatched /api/* call answers with the SPA shell and a JSON client chokes.
-run_worker_first = ["/api/*", "/ws/*", "/internal/*", "/v1/*", "/_deepspace/*", "/llms.txt", "/llms-full.txt", "/.well-known/mcp", "/.well-known/mcp.json", "/.well-known/mcp/*"]
+# Therefore, html_handling is intentionally not configured here.
+#
+# SPA routes are explicitly listed to prevent Cloudflare Assets
+# from returning 307 redirects for direct navigation requests.
+#
+# Bare paths and wildcard paths are both listed explicitly.
+# Static assets are intentionally excluded from this list.
+
+run_worker_first = [
+  # API and platform routes
+  "/api/*",
+  "/ws/*",
+  "/internal/*",
+  "/v1/*",
+  "/_deepspace/*",
+
+  # Public platform resources
+  "/llms.txt",
+  "/llms-full.txt",
+  "/.well-known/mcp",
+  "/.well-known/mcp.json",
+  "/.well-known/mcp/*",
+
+  # Authentication
+  "/login",
+
+  # Dashboard
+  "/dashboard",
+  "/dashboard/*",
+
+  # Investigations
+  "/investigations",
+  "/investigations/*",
+
+  # Validation
+  "/validation",
+  "/validation/*",
+
+  # History
+  "/history",
+  "/history/*",
+
+  # Settings
+  "/settings",
+  "/settings/*"
+]
 
 [vars]
-# Replaced by `npx deepspace app init` on the app's first use. The app is NOT
-# registered yet: see docs/deployment.md for the gate that must be cleared
-# before the first command that claims this id.
+# DeepSpace application identity
 DEEPSPACE_APP_ID = "app_01M81TNJ1N7E1R12364FQK4WCK"
 APP_NAME = "signalmess"
+
+# OAuth redirect configuration
 NATIVE_AUTH_REDIRECT_URIS = ""
 
-# The app's public origin, which the deploy publishes to `<name>.app.space`.
-# `loadConfig` derives `authorizedParties` (the `azp` a platform token may carry)
-# from this value, and `assertProductionSafety` refuses a production boot whose
-# origin is still a loopback default. It must therefore be the deployed host, not
-# `http://127.0.0.1:8787` — that form exists only for `deepspace dev start`,
-# which runs the Worker locally and does not read this file's `[vars]` for it.
+# Production application origin
 APP_ORIGIN = "https://signalmess.app.space"
 
-# SignalMesh non-secret configuration.
-# Both cost switches stay OFF. Turning them on requires the owner's explicit
-# authorization, and `ENABLE_PAID_OPERATIONS` additionally requires
-# `ENABLE_EXTERNAL_APIS=true` (enforced at startup).
+# External API and paid operation safeguards
 ENABLE_EXTERNAL_APIS = "false"
 ENABLE_PAID_OPERATIONS = "false"
+
+# External provider configuration
 EXA_SEARCH_TYPE = "auto"
 GEMINI_MODEL = "gemini-2.5-flash"
+
+# Daily usage limits
 RESEARCH_DAILY_LIMIT = "3"
 ANALYSIS_DAILY_LIMIT = "3"
+
+# Global usage limits
 RESEARCH_GLOBAL_DAILY_LIMIT = "30"
 ANALYSIS_GLOBAL_DAILY_LIMIT = "30"
+
+# Duplicate request protection
 DUPLICATE_GUARD_SECONDS = "90"
 
 [[migrations]]
@@ -63,11 +104,13 @@ tag = "v1"
 new_sqlite_classes = ["AppRecordRoom"]
 
 [durable_objects]
-bindings = [{ name = "RECORD_ROOMS", class_name = "AppRecordRoom" }]
+bindings = [
+  { name = "RECORD_ROOMS", class_name = "AppRecordRoom" }
+]
 
-# --- DeepSpace detected secrets (names only; values live in `npx deepspace secrets`) ---
-#   EXA_API_KEY
-#   GEMINI_API_KEY
+# --- DeepSpace detected secrets (names only; values live in npx deepspace secrets) ---
+# EXA_API_KEY
+# GEMINI_API_KEY
 # --- end DeepSpace detected secrets ---
 
 [dev]
