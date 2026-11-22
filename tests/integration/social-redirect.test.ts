@@ -111,10 +111,12 @@ describe('social-redirect: starts the flow by redirecting the browser', () => {
     assert.equal(target.searchParams.get('provider'), 'github')
   })
 
-  it('names the configured app origin as returnTo', async () => {
+  it('names the configured app origin as returnTo, pointing at our completion route', async () => {
     const result = await call(build({ authWorkerUrl: WORKER, appOrigin: APP }), '/api/auth/social-redirect?provider=google')
     const target = new URL(result.location!)
-    assert.equal(target.searchParams.get('returnTo'), `${APP}/dashboard`)
+    // The code must come back to a handler we own; the platform does not
+    // implement `/api/auth/oauth-complete`.
+    assert.equal(target.searchParams.get('returnTo'), `${APP}/api/auth/oauth-complete`)
   })
 
   it('tolerates a trailing slash on APP_ORIGIN', async () => {
@@ -122,7 +124,10 @@ describe('social-redirect: starts the flow by redirecting the browser', () => {
       build({ authWorkerUrl: WORKER, appOrigin: 'https://signalmess.app.space/' }),
       '/api/auth/social-redirect?provider=google',
     )
-    assert.equal(new URL(result.location!).searchParams.get('returnTo'), `${APP}/dashboard`)
+    assert.equal(
+      new URL(result.location!).searchParams.get('returnTo'),
+      `${APP}/api/auth/oauth-complete`,
+    )
   })
 
   it('does not depend on the incoming Host header (no open redirect)', async () => {
@@ -133,7 +138,7 @@ describe('social-redirect: starts the flow by redirecting the browser', () => {
       { host: 'evil.example', 'x-forwarded-host': 'evil.example' },
     )
     const returnTo = new URL(result.location!).searchParams.get('returnTo')!
-    assert.equal(returnTo, `${APP}/dashboard`)
+    assert.equal(returnTo, `${APP}/api/auth/oauth-complete`)
     assert.ok(!returnTo.includes('evil.example'))
   })
 
@@ -188,7 +193,7 @@ describe('social-redirect: the OAuth state stays on the platform', () => {
     const source = readFileSync(new URL('../../server/http/auth-proxy.ts', import.meta.url), 'utf8')
     const bridge = source.slice(
       source.indexOf('export function createSocialRedirectRoutes'),
-      source.indexOf('export function createAuthProxyRoutes'),
+      source.indexOf("app.get('/oauth-complete'"),
     )
     assert.ok(bridge.length > 0, 'bridge source not found')
 
@@ -202,7 +207,7 @@ describe('social-redirect: the OAuth state stays on the platform', () => {
     const source = readFileSync(new URL('../../server/http/auth-proxy.ts', import.meta.url), 'utf8')
     const bridge = source.slice(
       source.indexOf('export function createSocialRedirectRoutes'),
-      source.indexOf('export function createAuthProxyRoutes'),
+      source.indexOf("app.get('/oauth-complete'"),
     )
     // Strip comments: the doc block explains the Set-Cookie problem it fixes.
     const code = bridge.replace(/\/\*[\s\S]*?\*\//g, '').replace(/(^|[^:])\/\/[^\n]*/g, '$1')
@@ -215,7 +220,7 @@ describe('social-redirect: the OAuth state stays on the platform', () => {
     const source = readFileSync(new URL('../../server/http/auth-proxy.ts', import.meta.url), 'utf8')
     const bridge = source.slice(
       source.indexOf('export function createSocialRedirectRoutes'),
-      source.indexOf('export function createAuthProxyRoutes'),
+      source.indexOf("app.get('/oauth-complete'"),
     )
     const code = bridge.replace(/\/\*[\s\S]*?\*\//g, '').replace(/(^|[^:])\/\/[^\n]*/g, '$1')
     assert.ok(!/\bstate\b/i.test(code), 'no state handling')

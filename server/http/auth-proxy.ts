@@ -1,4 +1,4 @@
-import { Hono } from 'hono'
+import { Hono, type Context } from 'hono'
 import { authWorkerFetch } from 'deepspace/worker'
 import type { AppEnv } from './middleware.ts'
 
@@ -55,6 +55,7 @@ export const APP_OWNED_AUTH_PATHS = new Set([
   '/api/auth/login',
   '/api/auth/logout',
   '/api/auth/social-redirect',
+  '/api/auth/oauth-complete',
 ])
 
 /**
@@ -262,16 +263,182 @@ export function createSocialRedirectRoutes(options: AuthProxyOptions = {}): Hono
 
     const start = new URL('/login/social', workerOrigin)
     start.searchParams.set('provider', provider)
-    // The auth worker validates this against its own trusted origins; it is the
-    // app's configured origin plus a fixed path, never caller input.
-    start.searchParams.set('returnTo', `${appOrigin.replace(/\/$/, '')}/dashboard`)
+    // Where the auth worker returns the browser with the one-time code.
+    //
+    // It must be our own completion route, not `/dashboard`: the code has to be
+    // redeemed server-side (`oauth-complete` below), and the platform does not
+    // implement that path. This mirrors the SDK's own `nativeAuthStart`, which
+    // builds `<app origin>/api/auth/oauth-complete` as the `returnTo` — verified
+    // live, including that the start page accepts an `/api/auth/*` returnTo.
+    //
+    // The origin is the **configured** one, never the request Host, so this
+    // cannot become an open redirect.
+    start.searchParams.set('returnTo', `${appOrigin.replace(/\/$/, '')}/api/auth/oauth-complete`)
 
     // A plain 302: the browser must perform this navigation so the auth worker's
     // Set-Cookie lands on *its* origin.
     return c.redirect(start.toString(), 302)
   })
 
+  /**
+   * `GET /api/auth/oauth-complete?code=…`
+   *
+   * ## Why this route exists (the third and current defect)
+   *
+   * After the provider handshake the auth worker sends the browser back to the
+   * `returnTo` it was given, carrying a one-time `code`. The SDK names the
+   * destination `/api/auth/oauth-complete` on the **app's** origin
+   * (`nativeAuthStart` builds exactly that URL) — so this endpoint is
+   * **app-owned**. The platform does not implement it: a live probe of
+   * `auth.deep.space/api/auth/oauth-complete` returns 404, and so did our
+   * production deployment, which is the 404 being reported.
+   *
+   * ## The official contract this follows
+   *
+   * The SDK's own `nativeAuthExchange` documents the whole chain, and this route
+   * performs the same steps server-side:
+   *
+   *   1. `POST {AUTH_WORKER_URL}/api/auth/exchange-code` with `{ code }`
+   *      → `{ sessionToken }` (the one-time code is consumed here; a reused or
+   *        expired code answers 400/401).
+   *   2. `POST {AUTH_WORKER_URL}/api/auth/token` with
+   *      `Cookie: __Secure-better-auth.session_token=<sessionToken>`
+   *      → `{ token }`, a platform-signed JWT.
+   *
+   * The session cookie is then set on **our** origin so the browser holds it,
+   * and the browser is sent to the dashboard. `getAuthToken()` will call our
+   * `/api/auth/token` (proxied) with that cookie and receive the JWT — the same
+   * path every authenticated request already uses. `resolveIdentity` verifies it
+   * with the platform public key, so issuer and `authorizedParties` are
+   * untouched.
+   *
+   * ## What this route deliberately does not do
+   *
+   * It does not mint a session, sign a JWT, or validate OAuth state/PKCE itself
+   * — state and PKCE are enforced by the auth worker before it ever issues a
+   * code, and the code is only redeemable once. It does not trust any identity
+   * from the query string: the `code` is an opaque one-time credential validated
+   * upstream, and the only thing derived from it is the platform's own response.
+   * No token is placed in a URL, a log, or the HTML.
+   */
+  app.get('/oauth-complete', async (c) => {
+    const authWorkerUrl = options.authWorkerUrl
+    const appOrigin = options.appOrigin
+
+    if (!authWorkerUrl || !appOrigin) {
+      return authFailure(c, 503, 'auth_unavailable', 'Autenticação não configurada.')
+    }
+
+    // The provider's redirect carries the one-time code. A missing or oversized
+    // value is a bad request, not a server error.
+    const code = c.req.query('code')
+    if (typeof code !== 'string' || code.length === 0 || code.length > 4096) {
+      return authFailure(c, 400, 'invalid_request', 'Código de autorização ausente ou inválido.')
+    }
+
+    // 1. Redeem the one-time code. This is where expiry and reuse are rejected.
+    let exchange: Response
+    try {
+      exchange = await authWorkerFetch({ AUTH_WORKER_URL: authWorkerUrl }, '/api/auth/exchange-code', {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ code }),
+      })
+    } catch {
+      return authFailure(c, 502, 'provider_unavailable', 'Serviço de autenticação indisponível.', true)
+    }
+
+    if (!exchange.ok) {
+      // 400/401 from the platform means the code is expired, already used, or
+      // forged. Anything else is an availability problem.
+      const definitive = exchange.status === 400 || exchange.status === 401
+      return authFailure(
+        c,
+        definitive ? 401 : 502,
+        definitive ? 'invalid_code' : 'provider_unavailable',
+        definitive
+          ? 'O código de autorização expirou. Tente entrar novamente.'
+          : 'Serviço de autenticação indisponível.',
+        !definitive,
+      )
+    }
+
+    const exchanged = (await exchange.json().catch(() => null)) as { sessionToken?: unknown } | null
+    if (!exchanged || typeof exchanged.sessionToken !== 'string' || exchanged.sessionToken.length < 16) {
+      return authFailure(c, 502, 'invalid_provider_response', 'A autenticação não emitiu sessão.', true)
+    }
+    const sessionToken = exchanged.sessionToken
+
+    // 2. Prove the session can obtain a JWT before redirecting anywhere. A
+    //    dashboard redirect is only honest once authentication is confirmed.
+    let tokenResponse: Response
+    try {
+      tokenResponse = await authWorkerFetch({ AUTH_WORKER_URL: authWorkerUrl }, '/api/auth/token', {
+        method: 'POST',
+        headers: { cookie: `${SESSION_COOKIE}=${encodeURIComponent(sessionToken)}` },
+      })
+    } catch {
+      return authFailure(c, 502, 'provider_unavailable', 'Serviço de autenticação indisponível.', true)
+    }
+
+    if (!tokenResponse.ok) {
+      return authFailure(
+        c,
+        tokenResponse.status === 401 ? 401 : 502,
+        tokenResponse.status === 401 ? 'session_rejected' : 'provider_unavailable',
+        'A sessão não pôde ser validada. Tente entrar novamente.',
+        tokenResponse.status !== 401,
+      )
+    }
+
+    const issued = (await tokenResponse.json().catch(() => null)) as { token?: unknown } | null
+    if (!issued || typeof issued.token !== 'string') {
+      return authFailure(c, 502, 'invalid_provider_response', 'A autenticação não emitiu token.', true)
+    }
+
+    // 3. Hand the browser the session cookie on our own origin, then go to the
+    //    dashboard. The token itself stays out of the URL: the client obtains it
+    //    through `/api/auth/token`, which is already proxied.
+    const cookie = [
+      `${SESSION_COOKIE}=${encodeURIComponent(sessionToken)}`,
+      'Path=/',
+      'HttpOnly',
+      'Secure',
+      'SameSite=Lax',
+      'Max-Age=604800',
+    ].join('; ')
+
+    const destination = `${appOrigin.replace(/\/$/, '')}/dashboard`
+    return new Response(null, {
+      status: 302,
+      headers: {
+        location: destination,
+        'set-cookie': cookie,
+        'cache-control': 'no-store',
+      },
+    })
+  })
+
   return app
+}
+
+/** Session cookie name the auth worker and this app must agree on. */
+const SESSION_COOKIE = '__Secure-better-auth.session_token'
+
+/**
+ * Uniform JSON failure for the OAuth completion route.
+ *
+ * Never redirects on failure: sending an unauthenticated browser to the
+ * dashboard would look like a login that silently did nothing.
+ */
+function authFailure(
+  c: Context<AppEnv>,
+  status: 400 | 401 | 502 | 503,
+  code: string,
+  message: string,
+  retryable = false,
+): Response {
+  return c.json({ success: false as const, error: { code, message, retryable } }, status)
 }
 
 export function createAuthProxyRoutes(options: AuthProxyOptions = {}): Hono<AppEnv> {

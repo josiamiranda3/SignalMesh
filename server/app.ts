@@ -110,9 +110,11 @@ export function createApp(options: CreateAppOptions): Hono<AppEnv> {
   // authenticates through its local adapter, and a request that falls through
   // here still gets the owned routes above.
   if (config.authMode === 'deepspace') {
-    // `/social-redirect` first: it is app-owned (the platform does not implement
-    // it), so it must be registered before the catch-all proxy that would
-    // otherwise forward it upstream and get a 404.
+    // The OAuth bridge first. It owns two paths the platform does not serve —
+    // `/social-redirect` (the SDK's browser entry point) and `/oauth-complete`
+    // (where the auth worker returns the one-time code) — so both must be
+    // registered before the catch-all proxy that would forward them upstream
+    // and get a 404.
     app.route('/api/auth', createSocialRedirectRoutes({ authWorkerUrl: authWorkerUrl, appOrigin: config.appOrigin }))
     app.route('/api/auth', createAuthProxyRoutes({ authWorkerUrl: authWorkerUrl }))
   }

@@ -54,9 +54,11 @@ for (const provider of ['google', 'github']) {
   check(target?.origin === AUTH_WORKER, `${provider}: goes to the auth worker origin`)
   check(target?.pathname === '/login/social', `${provider}: uses the browser-navigable start page`)
   check(target?.searchParams.get('provider') === provider, `${provider}: names the provider`)
+  // The one-time code must come back to a handler this app owns; the platform
+  // does not implement `/api/auth/oauth-complete`.
   check(
-    target?.searchParams.get('returnTo') === `${APP_ORIGIN}/dashboard`,
-    `${provider}: returnTo is the configured app origin`,
+    target?.searchParams.get('returnTo') === `${APP_ORIGIN}/api/auth/oauth-complete`,
+    `${provider}: returnTo is our completion route`,
     target?.searchParams.get('returnTo') ?? 'none',
   )
 }

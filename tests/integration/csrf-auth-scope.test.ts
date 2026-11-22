@@ -102,7 +102,9 @@ describe('CSRF scope: the SDK auth handshake reaches the proxy', () => {
     },
     { method: 'POST', path: '/api/auth/sign-out', label: 'signOut()' },
     { method: 'GET', path: '/api/auth/session', label: 'useSession' },
-    { method: 'GET', path: '/api/auth/oauth-complete?code=abc', label: 'OAuth callback' },
+    // NOTE: `/api/auth/oauth-complete` was in this list until v0.2.6. It is now
+    // app-owned (the platform does not implement it), so it no longer reaches
+    // the proxy — see tests/integration/oauth-complete.test.ts.
   ]
 
   for (const request of SDK_REQUESTS) {
