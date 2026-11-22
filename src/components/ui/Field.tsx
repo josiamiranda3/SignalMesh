@@ -64,7 +64,7 @@ export const Input = forwardRef<HTMLInputElement, InputProps>(function Input(
     <input
       ref={ref}
       aria-invalid={invalid || undefined}
-      className={cn(FIELD_BASE, 'h-9.5 px-3', invalid ? FIELD_STATE.invalid : FIELD_STATE.normal, className)}
+      className={cn(FIELD_BASE, 'min-h-11 px-3', invalid ? FIELD_STATE.invalid : FIELD_STATE.normal, className)}
       {...rest}
     />
   )
@@ -103,7 +103,7 @@ export const Select = forwardRef<HTMLSelectElement, SelectProps>(function Select
       aria-invalid={invalid || undefined}
       className={cn(
         FIELD_BASE,
-        'h-9.5 appearance-none bg-[url("data:image/svg+xml;charset=utf-8,%3Csvg xmlns=\'http://www.w3.org/2000/svg\' width=\'12\' height=\'12\' viewBox=\'0 0 12 12\'%3E%3Cpath fill=\'%236e7a93\' d=\'M6 8.5 1.5 4h9z\'/%3E%3C/svg%3E")] bg-[length:12px] bg-[right_0.75rem_center] bg-no-repeat px-3 pr-8',
+        'min-h-11 appearance-none bg-[url("data:image/svg+xml;charset=utf-8,%3Csvg xmlns=\'http://www.w3.org/2000/svg\' width=\'12\' height=\'12\' viewBox=\'0 0 12 12\'%3E%3Cpath fill=\'%236e7a93\' d=\'M6 8.5 1.5 4h9z\'/%3E%3C/svg%3E")] bg-[length:12px] bg-[right_0.75rem_center] bg-no-repeat px-3 pr-8',
         invalid ? FIELD_STATE.invalid : FIELD_STATE.normal,
         className,
       )}

@@ -72,7 +72,7 @@ function LoginScreen() {
       {/* Left: context */}
       <div className="relative hidden flex-col justify-between border-r border-hairline bg-base/50 p-12 lg:flex">
         <div aria-hidden className="grid-fade pointer-events-none absolute inset-0" />
-        <Link to="/" className="relative flex min-h-9 items-center gap-2.5">
+        <Link to="/" className="relative flex min-h-11 items-center gap-2.5">
           <Logo size={28} />
           <Wordmark className="text-base" />
         </Link>
@@ -193,7 +193,7 @@ function LoginScreen() {
           </div>
 
           <p className="mt-6 text-center text-[0.75rem] text-ink-faint">
-            <Link to="/" className="underline decoration-hairline-strong underline-offset-4 hover:text-ink-muted">
+            <Link to="/" className="inline-flex min-h-11 items-center underline decoration-hairline-strong underline-offset-4 hover:text-ink-muted">
               {t('login.backHome')}
             </Link>
           </p>

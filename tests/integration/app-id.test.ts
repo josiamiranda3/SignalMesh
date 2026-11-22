@@ -34,10 +34,23 @@ function read(path: string): string {
 describe('wrangler App ID', () => {
   const toml = read('wrangler.toml')
 
-  it('still carries the placeholder, because the app is not registered', () => {
-    // Asserted so that registering the app is a deliberate, visible change to
-    // this test — not something that slips in unnoticed.
-    assert.match(toml, /DEEPSPACE_APP_ID\s*=\s*"__APP_ID__"/)
+  it('carries a real platform app id, or the placeholder while unregistered', () => {
+    const match = /DEEPSPACE_APP_ID\s*=\s*"([^"]*)"/.exec(toml)
+    assert.ok(match, 'DEEPSPACE_APP_ID must be declared')
+
+    const value = match[1]!
+    if (value === '__APP_ID__') {
+      // Still unregistered. Acceptable, but the platform build refuses to run
+      // and the realtime providers stay off.
+      return
+    }
+
+    // Registered: the id must be a real one, never a hand-written lookalike.
+    assert.match(
+      value,
+      /^app_[0-9A-HJKMNP-TV-Z]{26}$/,
+      `DEEPSPACE_APP_ID must be a platform-minted id, got: ${value}`,
+    )
   })
 
   it('declares APP_ORIGIN as the deployed host, never loopback', () => {

@@ -17,6 +17,7 @@
 import { buildApp } from '../../server/bootstrap.ts'
 import { serve } from '@hono/node-server'
 import { serveStatic } from '@hono/node-server/serve-static'
+import { spaRoot } from './dist-root.ts'
 import { Page } from './cdp.ts'
 
 const PORT = 8861
@@ -52,8 +53,9 @@ async function main(): Promise<void> {
       SEED_DEMO_DATA: 'false',
     },
   })
-  built.app.use('*', serveStatic({ root: './dist' }))
-  built.app.get('*', serveStatic({ path: './dist/index.html' }))
+  const spa = spaRoot()
+  built.app.use('*', serveStatic({ root: spa.root }))
+  built.app.get('*', serveStatic({ path: spa.index }))
   const server = serve({ fetch: built.app.fetch, port: PORT, hostname: '127.0.0.1' })
   await new Promise((r) => setTimeout(r, 500))
 
