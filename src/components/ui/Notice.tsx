@@ -1,6 +1,7 @@
 import { AlertTriangle, Info, ShieldAlert, X } from 'lucide-react'
 import type { ReactNode } from 'react'
 import { cn } from '@/lib/utils'
+import { useI18n } from '@/i18n/I18nProvider'
 
 /**
  * Inline notice.
@@ -24,6 +25,7 @@ export function Notice({
   onDismiss?: () => void
   className?: string
 }) {
+  const { t } = useI18n()
   const styles = {
     info: { box: 'border-signal/25 bg-signal/[0.07]', icon: 'text-signal-bright', Icon: Info },
     caution: { box: 'border-caution/30 bg-caution/[0.07]', icon: 'text-caution', Icon: AlertTriangle },
@@ -45,7 +47,7 @@ export function Notice({
         <button
           type="button"
           onClick={onDismiss}
-          aria-label="Dispensar aviso"
+          aria-label={t('common.dismissNotice')}
           className="-mr-1 -mt-0.5 size-6 shrink-0 rounded text-ink-faint transition-colors hover:bg-white/5 hover:text-ink-muted"
         >
           <X aria-hidden className="mx-auto size-3.5" />

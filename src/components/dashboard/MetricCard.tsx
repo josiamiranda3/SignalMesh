@@ -5,9 +5,12 @@ import { cn } from '@/lib/utils'
 /**
  * Metric card.
  *
- * Shows one number with its label and — when the data supports it — a
- * comparison against the previous period. A metric with no data renders a dash,
- * never a fabricated zero, and the footnote explains what the number counts.
+ * The figure is the subject: it is set in the mono face, large, tabular and
+ * tight, so a row of four cards scans as one calibrated readout. Everything
+ * else in the card is deliberately quieter than the number.
+ *
+ * A metric with no data renders a dash, never a fabricated zero, and the
+ * footnote explains what the number counts.
  */
 export function MetricCard({
   label,
@@ -27,7 +30,7 @@ export function MetricCard({
   className?: string
 }) {
   const accent = {
-    neutral: 'text-ink-muted',
+    neutral: 'text-ink-faint',
     signal: 'text-signal-bright',
     positive: 'text-positive',
     caution: 'text-caution',
@@ -35,17 +38,35 @@ export function MetricCard({
   }[tone]
 
   return (
-    <div className={cn('panel group relative overflow-hidden p-5 transition-colors hover:border-hairline-strong', className)}>
+    <div
+      className={cn(
+        'panel group relative overflow-hidden p-5 transition-colors duration-200 hover:border-hairline-strong',
+        className,
+      )}
+    >
+      {/* A hairline accent on the top edge: the card's only decoration, and it
+          marks the metric's state rather than the card itself. */}
+      <span
+        aria-hidden
+        className={cn(
+          'absolute inset-x-0 top-0 h-px',
+          tone === 'neutral' ? 'bg-hairline' : 'bg-current opacity-40',
+          accent,
+        )}
+      />
+
       <div className="flex items-start justify-between gap-3">
-        <p className="text-[0.75rem] font-medium text-ink-subtle">{label}</p>
-        <Icon aria-hidden className={cn('size-4 shrink-0', accent)} />
+        <p className="meta-label">{label}</p>
+        <Icon aria-hidden className={cn('size-3.5 shrink-0', accent)} />
       </div>
-      <p className="tnum mt-3 text-[1.75rem] font-semibold leading-none tracking-[-0.03em] text-ink">{value}</p>
-      <div className="mt-3 flex items-center gap-2">
+
+      <p className="figure mt-3.5 text-[1.875rem] leading-none text-ink">{value}</p>
+
+      <div className="mt-3.5 flex items-center gap-2">
         {trend ? (
           <span
             className={cn(
-              'inline-flex items-center gap-0.5 text-[0.75rem] font-medium',
+              'inline-flex items-center gap-0.5 font-mono text-[0.6875rem] font-medium',
               trend.value > 0 ? 'text-positive' : trend.value < 0 ? 'text-negative' : 'text-ink-faint',
             )}
           >
@@ -60,7 +81,7 @@ export function MetricCard({
             {trend.value}%
           </span>
         ) : null}
-        <p className="truncate text-[0.75rem] text-ink-faint">{hint ?? (trend ? trend.label : '')}</p>
+        <p className="truncate text-[0.6875rem] text-ink-faint">{hint ?? (trend ? trend.label : '')}</p>
       </div>
     </div>
   )
@@ -86,7 +107,7 @@ export function InlineStat({
   return (
     <div>
       <p className="meta-label">{label}</p>
-      <p className={cn('tnum mt-1 text-base font-semibold', color)}>{value}</p>
+      <p className={cn('figure mt-1.5 text-[0.9375rem]', color)}>{value}</p>
     </div>
   )
 }

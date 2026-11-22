@@ -27,6 +27,7 @@ import {
   validationLabel,
 } from '@/components/ui'
 import { formatNumber, formatRelative, formatDate, untilReset } from '@/lib/format'
+import { useI18n } from '@/i18n/I18nProvider'
 import { useAuth } from '@/app/AuthProvider'
 
 /**
@@ -38,6 +39,7 @@ import { useAuth } from '@/app/AuthProvider'
  */
 export default function DashboardPage() {
   const { user } = useAuth()
+  const { t } = useI18n()
   const { data, error, loading, reload } = useAsync<DashboardSummary>(
     () => api.get<DashboardSummary>('/api/dashboard'),
     [],
@@ -46,8 +48,12 @@ export default function DashboardPage() {
   if (loading) {
     return (
       <PageContainer>
-        <PageHeader eyebrow="Operação" title="Visão geral" description="Carregando indicadores…" />
-        <div className="mt-7 space-y-5">
+        <PageHeader
+          eyebrow={t('dashboard.eyebrow')}
+          title={t('dashboard.title')}
+          description={t('dashboard.loading')}
+        />
+        <div className="mt-6 space-y-4">
           <SkeletonStats />
           <div className="grid gap-5 lg:grid-cols-3">
             <Skeleton className="h-72 rounded-lg lg:col-span-2" />
@@ -61,17 +67,17 @@ export default function DashboardPage() {
   if (error || !data) {
     return (
       <PageContainer>
-        <PageHeader eyebrow="Operação" title="Visão geral" />
+        <PageHeader eyebrow={t('dashboard.eyebrow')} title={t('dashboard.title')} />
         <Notice
           tone="danger"
-          title="Não foi possível carregar os indicadores"
+          title={t('dashboard.loadError')}
           action={
             <Button size="sm" onClick={reload}>
-              Tentar novamente
+              {t('common.retry')}
             </Button>
           }
         >
-          {error?.message ?? 'Erro inesperado ao consultar o servidor.'}
+          {error?.message ?? t('dashboard.loadErrorFallback')}
         </Notice>
       </PageContainer>
     )
@@ -87,52 +93,61 @@ export default function DashboardPage() {
   return (
     <PageContainer>
       <PageHeader
-        eyebrow="Operação"
-        title={`Bom trabalho, ${firstName(user?.name)}`}
-        description="Panorama das suas investigações, evidências e decisões de validação. Todos os números são calculados a partir dos dados persistidos."
+        eyebrow={t('dashboard.eyebrow')}
+        title={t('dashboard.greeting', {
+          name: firstName(user?.name, t('dashboard.greetingAnonymous')),
+        })}
+        description={t('dashboard.description')}
         actions={
           <>
             <Button variant="secondary" size="md" onClick={reload} loading={false}>
-              Atualizar
+              {t('dashboard.refresh')}
             </Button>
             <Link to="/investigations/new">
               <Button variant="primary" size="md" iconLeft={<Plus className="size-4" aria-hidden />}>
-                Nova investigação
+                {t('dashboard.newInvestigation')}
               </Button>
             </Link>
           </>
         }
       />
 
-      <div className="mt-7 grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
+      <div className="mt-6 grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
         <MetricCard
-          label="Investigações"
+          label={t('dashboard.metricInvestigations')}
           value={formatNumber(data.investigations.total)}
-          hint={`${data.investigations.byStatus['active'] ?? 0} em andamento · ${data.investigations.byStatus['draft'] ?? 0} rascunho(s)`}
+          hint={t('dashboard.metricInvestigationsHint', {
+            active: data.investigations.byStatus['active'] ?? 0,
+            draft: data.investigations.byStatus['draft'] ?? 0,
+          })}
           icon={FlaskConical}
           tone="signal"
         />
         <MetricCard
-          label="Evidências coletadas"
+          label={t('dashboard.metricEvidence')}
           value={formatNumber(totalEvidence)}
-          hint={totalEvidence === 0 ? 'Nenhuma fonte adicionada ainda' : `${formatNumber(pending + review)} aguardando decisão`}
+          hint={
+            totalEvidence === 0
+              ? t('dashboard.metricEvidenceEmpty')
+              : t('dashboard.metricEvidenceHint', { pending: formatNumber(pending + review) })
+          }
           icon={Layers}
         />
         <MetricCard
-          label="Evidências aprovadas"
+          label={t('dashboard.metricAccepted')}
           value={formatNumber(accepted)}
           hint={
             totalEvidence > 0
-              ? `${Math.round((accepted / totalEvidence) * 100)}% do total coletado`
-              : 'Aprovação é uma decisão humana registrada'
+              ? t('dashboard.metricAcceptedHint', { percent: Math.round((accepted / totalEvidence) * 100) })
+              : t('dashboard.metricAcceptedEmpty')
           }
           icon={BadgeCheck}
           tone="positive"
         />
         <MetricCard
-          label="Análises realizadas"
+          label={t('dashboard.metricAnalyses')}
           value={formatNumber(data.analyses)}
-          hint={`${formatNumber(data.validations)} decisão(ões) de validação registradas`}
+          hint={t('dashboard.metricAnalysesHint', { count: formatNumber(data.validations) })}
           icon={Sparkles}
           tone="signal"
         />
@@ -142,39 +157,39 @@ export default function DashboardPage() {
         <div className="mt-5">
           <EmptyState
             icon={<FlaskConical className="size-5" aria-hidden />}
-            title="Nenhuma investigação ainda"
-            description="Uma investigação começa com um tema e um objetivo explícito. É esse objetivo que orienta a pesquisa externa, a análise por IA e o cálculo de alinhamento de cada fonte."
+            title={t('dashboard.emptyTitle')}
+            description={t('dashboard.emptyDescription')}
             action={
               <Link to="/investigations/new">
                 <Button variant="primary" iconLeft={<Plus className="size-4" aria-hidden />}>
-                  Criar primeira investigação
+                  {t('dashboard.emptyAction')}
                 </Button>
               </Link>
             }
             secondary={
               <Link to="/settings">
-                <Button variant="ghost">Verificar configuração dos provedores</Button>
+                <Button variant="ghost">{t('dashboard.emptySecondary')}</Button>
               </Link>
             }
           />
         </div>
       ) : (
         <>
-          <div className="mt-5 grid gap-5 lg:grid-cols-3">
+          <div className="mt-5 grid gap-4 lg:grid-cols-3">
             {/* Evidence distribution */}
             <section className="panel p-5 lg:col-span-1" aria-labelledby="distribution-title">
               <SectionHeader
-                title="Distribuição de evidências"
-                description="Por status de validação"
+                title={t('dashboard.distributionTitle')}
+                description={t('dashboard.distributionDescription')}
               />
               <div className="mt-5">
                 <Meter
-                  ariaLabel={`Distribuição de ${totalEvidence} evidências por status`}
+                  ariaLabel={t('dashboard.distributionTitle')}
                   segments={[
-                    { value: accepted, tone: 'bg-positive', label: 'Aprovadas' },
-                    { value: review, tone: 'bg-caution', label: 'Em revisão' },
-                    { value: rejected, tone: 'bg-negative', label: 'Rejeitadas' },
-                    { value: pending, tone: 'bg-[#3a4560]', label: 'Pendentes' },
+                    { value: accepted, tone: 'bg-positive', label: validationLabel('accepted') },
+                    { value: review, tone: 'bg-caution', label: validationLabel('needs_review') },
+                    { value: rejected, tone: 'bg-negative', label: validationLabel('rejected') },
+                    { value: pending, tone: 'bg-ink-faint/40', label: validationLabel('pending') },
                   ]}
                 />
               </div>
@@ -184,13 +199,12 @@ export default function DashboardPage() {
                   { label: validationLabel('accepted'), value: accepted, tone: 'bg-positive' },
                   { label: validationLabel('needs_review'), value: review, tone: 'bg-caution' },
                   { label: validationLabel('rejected'), value: rejected, tone: 'bg-negative' },
-                  { label: validationLabel('pending'), value: pending, tone: 'bg-[#3a4560]' },
+                  { label: validationLabel('pending'), value: pending, tone: 'bg-ink-faint/40' },
                 ]}
               />
               <div className="mt-5 border-t border-hairline pt-4">
                 <p className="text-[0.75rem] leading-relaxed text-ink-faint">
-                  Aprovação humana indica que o pesquisador considerou a fonte adequada para a
-                  investigação. Não é atestado de veracidade científica ou jurídica.
+                  {t('dashboard.distributionNote')}
                 </p>
               </div>
             </section>
@@ -198,75 +212,79 @@ export default function DashboardPage() {
             {/* 30-day trend */}
             <section className="panel p-5 lg:col-span-2" aria-labelledby="trend-title">
               <SectionHeader
-                title="Evolução das investigações"
-                description="Criações nos últimos 30 dias"
+                title={t('dashboard.trendTitle')}
+                description={t('dashboard.trendDescription')}
                 actions={
                   <div className="flex items-center gap-3 text-[0.75rem] text-ink-faint">
                     <span className="flex items-center gap-1.5">
                       <span className="size-1.5 rounded-full bg-signal" aria-hidden />
-                      Investigações
+                      {t('dashboard.legendInvestigations')}
                     </span>
                     <span className="flex items-center gap-1.5">
-                      <span className="size-1.5 rounded-full bg-cyan" aria-hidden />
-                      Evidências
+                      <span className="size-1.5 rounded-full bg-ink-muted" aria-hidden />
+                      {t('dashboard.legendEvidence')}
                     </span>
                   </div>
                 }
               />
-              <div className="mt-6 space-y-5">
+              <div className="mt-5 space-y-4">
                 <div>
                   <div className="flex items-baseline justify-between">
-                    <p className="text-[0.75rem] text-ink-subtle">Investigações criadas</p>
-                    <p className="tnum text-[0.75rem] text-ink-muted">
-                      {formatNumber(data.investigationTrend.reduce((sum, point) => sum + point.count, 0))} nos últimos 30 dias
+                    <p className="text-[0.75rem] text-ink-subtle">{t('dashboard.trendInvestigationsLabel')}</p>
+                    <p className="figure text-[0.75rem] text-ink-muted">
+                      {t('dashboard.trendLast30', {
+                        count: formatNumber(data.investigationTrend.reduce((sum, point) => sum + point.count, 0)),
+                      })}
                     </p>
                   </div>
                   <Sparkline
                     data={data.investigationTrend}
-                    ariaLabel="Investigações criadas por dia nos últimos 30 dias"
+                    ariaLabel={t('dashboard.trendInvestigationsLabel')}
                     height={82}
                     tone="signal"
                   />
                 </div>
                 <div>
                   <div className="flex items-baseline justify-between">
-                    <p className="text-[0.75rem] text-ink-subtle">Evidências coletadas</p>
-                    <p className="tnum text-[0.75rem] text-ink-muted">
-                      {formatNumber(data.evidenceTrend.reduce((sum, point) => sum + point.count, 0))} nos últimos 30 dias
+                    <p className="text-[0.75rem] text-ink-subtle">{t('dashboard.trendEvidenceLabel')}</p>
+                    <p className="figure text-[0.75rem] text-ink-muted">
+                      {t('dashboard.trendLast30', {
+                        count: formatNumber(data.evidenceTrend.reduce((sum, point) => sum + point.count, 0)),
+                      })}
                     </p>
                   </div>
                   <Sparkline
                     data={data.evidenceTrend}
-                    ariaLabel="Evidências coletadas por dia nos últimos 30 dias"
+                    ariaLabel={t('dashboard.trendEvidenceLabel')}
                     height={82}
-                    tone="cyan"
+                    tone="neutral"
                   />
                 </div>
               </div>
             </section>
           </div>
 
-          <div className="mt-5 grid gap-5 lg:grid-cols-[1.4fr_1fr]">
+          <div className="mt-4 grid gap-4 lg:grid-cols-[1.45fr_1fr]">
             {/* Recent investigations */}
             <section className="panel overflow-hidden" aria-labelledby="recent-investigations">
               <div className="flex items-center justify-between border-b border-hairline px-5 py-3.5">
-                <h2 id="recent-investigations" className="text-[0.9375rem] font-semibold text-ink">
-                  Investigações recentes
+                <h2 id="recent-investigations" className="text-[0.875rem] font-semibold text-ink">
+                  {t('dashboard.recentInvestigations')}
                 </h2>
                 <Link
                   to="/investigations"
                   className="flex min-h-8 items-center gap-1 text-[0.75rem] text-ink-subtle transition-colors hover:text-ink"
                 >
-                  Ver todas
+                  {t('dashboard.viewAll')}
                   <ArrowRight className="size-3" aria-hidden />
                 </Link>
               </div>
               {data.recentInvestigations.length === 0 ? (
                 <div className="px-5 py-10 text-center text-[0.8125rem] text-ink-faint">
-                  Nenhuma investigação cadastrada.
+                  {t('dashboard.recentInvestigationsEmpty')}
                 </div>
               ) : (
-                <ul className="divide-y divide-hairline/70">
+                <ul className="divide-y divide-hairline/60">
                   {data.recentInvestigations.map((investigation) => (
                     <li key={investigation.id}>
                       <Link
@@ -296,17 +314,17 @@ export default function DashboardPage() {
             </section>
 
             {/* Recent activity + quota */}
-            <div className="space-y-5">
+            <div className="flex flex-col gap-4">
               <section className="panel overflow-hidden" aria-labelledby="recent-activity">
                 <div className="flex items-center justify-between border-b border-hairline px-5 py-3.5">
-                  <h2 id="recent-activity" className="text-[0.9375rem] font-semibold text-ink">
-                    Atividades recentes
+                  <h2 id="recent-activity" className="text-[0.875rem] font-semibold text-ink">
+                    {t('dashboard.recentActivity')}
                   </h2>
                   <Activity className="size-3.5 text-ink-faint" aria-hidden />
                 </div>
                 {data.recentActivity.length === 0 ? (
                   <div className="px-5 py-8 text-center text-[0.8125rem] text-ink-faint">
-                    Nenhum evento registrado.
+                    {t('dashboard.recentActivityEmpty')}
                   </div>
                 ) : (
                   <ul className="divide-y divide-hairline/60">
@@ -322,20 +340,20 @@ export default function DashboardPage() {
 
               <section className="panel p-5" aria-labelledby="quota-title">
                 <div className="flex items-center justify-between">
-                  <h2 id="quota-title" className="text-[0.9375rem] font-semibold text-ink">
-                    Consumo de hoje
+                  <h2 id="quota-title" className="text-[0.875rem] font-semibold text-ink">
+                    {t('dashboard.quotaTitle')}
                   </h2>
                   <Gauge className="size-3.5 text-ink-faint" aria-hidden />
                 </div>
                 <div className="mt-4 space-y-3.5">
                   <QuotaRow
-                    label="Pesquisas Exa"
+                    label={t('dashboard.quotaResearch')}
                     used={data.quota.research.used}
                     limit={data.quota.research.limit}
                     resetsAt={data.quota.research.resetsAt}
                   />
                   <QuotaRow
-                    label="Análises Gemini"
+                    label={t('dashboard.quotaAnalysis')}
                     used={data.quota.analysis.used}
                     limit={data.quota.analysis.limit}
                     resetsAt={data.quota.analysis.resetsAt}
@@ -344,15 +362,14 @@ export default function DashboardPage() {
                 {!data.quota.externalApisEnabled ? (
                   <p className="mt-4 flex items-start gap-2 rounded-md border border-hairline bg-raised/50 px-3 py-2 text-[0.75rem] leading-relaxed text-ink-subtle">
                     <CircleDashed className="mt-0.5 size-3.5 shrink-0 text-caution" aria-hidden />
-                    Chamadas externas desativadas. Pesquisa e análise permanecem bloqueadas até
-                    configuração das chaves e do interruptor.
+                    {t('dashboard.quotaExternalDisabled')}
                   </p>
                 ) : null}
                 <Link
                   to="/settings"
                   className="mt-4 inline-flex min-h-9 items-center gap-1 text-[0.75rem] text-signal-bright transition-colors hover:text-signal"
                 >
-                  Configurar limites
+                  {t('dashboard.quotaConfigure')}
                   <ArrowRight className="size-3" aria-hidden />
                 </Link>
               </section>
@@ -375,17 +392,18 @@ function QuotaRow({
   limit: number
   resetsAt: string
 }) {
+  const { t } = useI18n()
   const ratio = limit > 0 ? used / limit : 0
   const tone = ratio >= 1 ? 'negative' : ratio >= 0.7 ? 'caution' : 'signal'
   return (
     <div>
       <div className="mb-1.5 flex items-baseline justify-between">
         <span className="text-[0.75rem] text-ink-muted">{label}</span>
-        <span className="tnum text-[0.75rem] text-ink-subtle">
+        <span className="figure text-[0.75rem] text-ink-subtle">
           {used}/{limit}
         </span>
       </div>
-      <div className="h-1.5 w-full overflow-hidden rounded-full bg-[#161c29]">
+      <div className="h-1.5 w-full overflow-hidden rounded-full bg-[#1a222c]">
         <div
           className={`h-full rounded-full transition-[width] ${
             tone === 'negative' ? 'bg-negative' : tone === 'caution' ? 'bg-caution' : 'bg-signal'
@@ -394,15 +412,22 @@ function QuotaRow({
         />
       </div>
       {used >= limit ? (
-        <p className="mt-1 text-[0.75rem] text-negative">Limite atingido · reinicia {untilReset(resetsAt)}</p>
+        <p className="mt-1 text-[0.75rem] text-negative">
+          {t('dashboard.quotaExhausted', { when: untilReset(resetsAt) })}
+        </p>
       ) : null}
     </div>
   )
 }
 
-function firstName(name: string | undefined): string {
-  if (!name) return 'pesquisador'
-  return name.trim().split(/\s+/)[0] ?? 'pesquisador'
+/**
+ * First name for the greeting, or the generic greeting when the session has no
+ * name. The caller passes the already-translated fallback so this helper never
+ * holds user-facing copy of its own.
+ */
+function firstName(name: string | undefined, fallback: string): string {
+  if (!name) return fallback
+  return name.trim().split(/\s+/)[0] ?? name
 }
 
 /** Re-exported for tests that import the trend formatter. */

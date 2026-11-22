@@ -30,6 +30,7 @@ import {
   useToast,
 } from '@/components/ui'
 import { formatDateTime, formatNumber, formatRelative, safeHref, untilReset } from '@/lib/format'
+import { useI18n, type TranslationKey } from '@/i18n/I18nProvider'
 import { cn } from '@/lib/utils'
 
 /**
@@ -44,6 +45,7 @@ import { cn } from '@/lib/utils'
 export default function AnalysisPage() {
   const { id = '' } = useParams()
   const toast = useToast()
+  const { t, locale } = useI18n()
   const { data, error, loading, reload } = useAsync<InvestigationDetail>(
     () => api.get<InvestigationDetail>(`/api/investigations/${id}`),
     [id],
@@ -70,9 +72,17 @@ export default function AnalysisPage() {
     setRunning(true)
     setFailure(null)
     try {
-      const analysis = await api.post<Analysis>(`/api/investigations/${id}/analyses`, {})
+      const analysis = await api.post<Analysis>(`/api/investigations/${id}/analyses`, {
+        // The analysis text is written in the language the user is reading the
+        // interface in. Only the *output* language is affected: the evidence,
+        // its titles and URLs are forwarded verbatim by the server.
+        outputLanguage: locale,
+      })
       setSelectedAnalysis(analysis.id)
-      toast.success('Análise concluída', `${analysis.findings.length} descoberta(s) vinculadas a evidências reais.`)
+      toast.success(
+        t('analysis.completedTitle'),
+        t('analysis.completedToastDetail', { count: analysis.findings.length }),
+      )
       reload()
     } catch (caught) {
       setFailure(caught instanceof Error ? caught : new Error('Falha desconhecida'))
@@ -98,11 +108,11 @@ export default function AnalysisPage() {
       <PageContainer>
         <EmptyState
           icon={<AlertTriangle className="size-5" aria-hidden />}
-          title="Investigação indisponível"
-          description={error?.message ?? 'Não foi possível carregar as análises.'}
+          title={t('analysis.unavailableTitle')}
+          description={error?.message ?? t('analysis.unavailableDescription')}
           action={
             <Link to="/investigations">
-              <Button variant="primary">Voltar</Button>
+              <Button variant="primary">{t('common.back')}</Button>
             </Link>
           }
         />
@@ -121,18 +131,23 @@ export default function AnalysisPage() {
       </Link>
 
       <PageHeader
-        eyebrow="Análise estruturada"
-        title="Síntese das evidências"
-        description="A análise é produzida pelo Google Gemini a partir exclusivamente das evidências armazenadas nesta investigação. Referências a fontes inexistentes invalidam o resultado."
+        eyebrow={t('analysis.eyebrow')}
+        title={t('analysis.title')}
+        description={t('analysis.description')}
         meta={
           quota ? (
             <>
               <span className="text-[0.75rem] text-ink-subtle">
-                Análises hoje: <span className="tnum">{quota.analysis.used}/{quota.analysis.limit}</span>
+                <span>
+                  {t('analysis.quotaToday', {
+                    used: quota.analysis.used,
+                    limit: quota.analysis.limit,
+                  })}
+                </span>
               </span>
               <span aria-hidden className="size-1 rounded-full bg-hairline-strong" />
               <span className="text-[0.75rem] text-ink-subtle">
-                {formatNumber(evidence.length)} evidência(s) disponível(is)
+                {t('analysis.evidenceAvailable', { count: formatNumber(evidence.length) })}
               </span>
             </>
           ) : null
@@ -146,28 +161,27 @@ export default function AnalysisPage() {
             onClick={() => setConfirmOpen(true)}
             iconLeft={running ? undefined : <Sparkles className="size-4" aria-hidden />}
           >
-            {running ? 'Analisando…' : 'Solicitar análise'}
+            {running ? t('analysis.analyzing') : t('analysis.requestAnalysis')}
           </Button>
         }
       />
 
       {externalDisabled ? (
         <div className="mt-6">
-          <Notice tone="caution" title="Análise por IA desativada">
-            As chamadas externas estão desligadas ou a chave do Gemini não está configurada no backend.
+          <Notice tone="caution" title={t('analysis.disabledTitle')}>
+            {t('analysis.disabledDescription')}
           </Notice>
         </div>
       ) : exhausted ? (
         <div className="mt-6">
-          <Notice tone="caution" title="Limite diário de análises atingido">
-            O contador reinicia {untilReset(quota!.analysis.resetsAt)}. As análises anteriores continuam acessíveis.
+          <Notice tone="caution" title={t('analysis.quotaTitle')}>
+            {t('analysis.quotaDescription', { when: untilReset(quota!.analysis.resetsAt) })}
           </Notice>
         </div>
       ) : evidence.length === 0 ? (
         <div className="mt-6">
-          <Notice tone="info" title="Nenhuma evidência para analisar">
-            Adicione fontes à investigação antes de solicitar uma análise. A IA só recebe evidências efetivamente
-            armazenadas.
+          <Notice tone="info" title={t('analysis.noEvidenceTitle')}>
+            {t('analysis.noEvidenceDescription')}
           </Notice>
         </div>
       ) : null}
@@ -176,7 +190,7 @@ export default function AnalysisPage() {
         <div className="mt-5">
           <Notice
             tone="danger"
-            title={failureTitle(failure)}
+            title={t(failureTitleKey(failure))}
             action={
               <Button size="sm" variant="secondary" onClick={() => setFailure(null)}>
                 Dispensar
@@ -194,8 +208,8 @@ export default function AnalysisPage() {
         <div className="mt-6">
           <EmptyState
             icon={<Sparkles className="size-5" aria-hidden />}
-            title="Nenhuma análise concluída"
-            description="A análise organiza as evidências em resumo executivo, descobertas com referências, contradições e limitações. Ela não decide se uma fonte é verdadeira — isso permanece com você."
+            title={t('analysis.emptyTitle')}
+            description={t('analysis.emptyDescription')}
             action={
               evidence.length > 0 ? (
                 <Button
@@ -204,11 +218,11 @@ export default function AnalysisPage() {
                   disabled={externalDisabled || exhausted}
                   iconLeft={<Sparkles className="size-4" aria-hidden />}
                 >
-                  Solicitar análise
+                  {t('analysis.requestAnalysis')}
                 </Button>
               ) : (
                 <Link to={`/investigations/${id}/research`}>
-                  <Button variant="primary">Pesquisar fontes primeiro</Button>
+                  <Button variant="primary">{t('analysis.researchFirst')}</Button>
                 </Link>
               )
             }
@@ -223,7 +237,7 @@ export default function AnalysisPage() {
             <div className="flex items-center gap-2 border-b border-hairline px-5 py-3.5">
               <FileWarning className="size-4 text-negative" aria-hidden />
               <h2 id="failed-analyses" className="text-[0.9375rem] font-semibold text-ink">
-                Tentativas não concluídas
+                {t('analysis.failedTitle')}
               </h2>
             </div>
             <ul className="divide-y divide-hairline/60">
@@ -233,7 +247,7 @@ export default function AnalysisPage() {
                   <li key={item.id} className="px-5 py-3">
                     <p className="text-[0.8125rem] leading-relaxed text-ink-muted">{item.errorMessage}</p>
                     <p className="mt-1 text-[0.75rem] text-ink-faint">
-                      {formatDateTime(item.createdAt)} · modelo {item.model} · nenhuma conclusão foi registrada
+                      {t('analysis.failedMeta', { date: formatDateTime(item.createdAt), model: item.model })}
                     </p>
                   </li>
                 ))}
@@ -243,10 +257,10 @@ export default function AnalysisPage() {
       ) : null}
 
       {!running && completed.length > 0 ? (
-        <div className="mt-6 space-y-5">
+        <div className="mt-5 space-y-4">
           {completed.length > 1 ? (
             <div className="flex flex-wrap items-center gap-2">
-              <span className="meta-label mr-1">Análises</span>
+              <span className="meta-label mr-1">{t('analysis.analysesLabel')}</span>
               {completed.map((analysis, index) => (
                 <button
                   key={analysis.id}
@@ -273,32 +287,30 @@ export default function AnalysisPage() {
       <Modal
         open={confirmOpen}
         onClose={() => setConfirmOpen(false)}
-        title="Solicitar análise ao Gemini"
-        description="Uma chamada ao provedor será feita e consumirá uma análise da sua cota diária."
+        title={t('analysis.confirmTitle')}
+        description={t('analysis.confirmDescription')}
         size="md"
         footer={
           <>
             <Button variant="ghost" onClick={() => setConfirmOpen(false)}>
-              Cancelar
+              {t('common.cancelAction')}
             </Button>
             <Button variant="primary" onClick={() => void requestAnalysis()} iconLeft={<Sparkles className="size-4" aria-hidden />}>
-              Confirmar análise
+              {t('analysis.confirmAction')}
             </Button>
           </>
         }
       >
         <div className="space-y-3 text-[0.8125rem] leading-relaxed text-ink-muted">
           <p>
-            Serão enviadas ao Google Gemini <strong className="text-ink">{formatNumber(evidence.length)}</strong>{' '}
-            evidência(s) desta investigação, incluindo título, URL, domínio, data e o conteúdo recuperado de
-            cada fonte, junto com o objetivo da investigação.
+            {t('analysis.confirmSentIntro', { count: formatNumber(evidence.length) })}
           </p>
           <ul className="space-y-2">
             {[
-              'Toda descoberta deve citar evidências reais do conjunto enviado.',
-              'Referências inexistentes invalidam a análise inteira.',
-              'Contradições entre fontes são relatadas, não resolvidas arbitrariamente.',
-              'Conteúdo das fontes é tratado como dado, nunca como instrução.',
+              t('analysis.confirmRuleCited'),
+              t('analysis.confirmRuleInvalid'),
+              t('analysis.confirmRuleContradictions'),
+              t('analysis.confirmRuleData'),
             ].map((item) => (
               <li key={item} className="flex gap-2">
                 <span aria-hidden className="mt-1.5 size-1 shrink-0 rounded-full bg-signal" />
@@ -307,7 +319,7 @@ export default function AnalysisPage() {
             ))}
           </ul>
           <Notice tone="info">
-            Aprovação humana de uma evidência não é atestado de veracidade científica ou jurídica.
+            {t('analysis.confirmNote')}
           </Notice>
         </div>
       </Modal>
@@ -316,6 +328,7 @@ export default function AnalysisPage() {
 }
 
 function AnalysisView({ analysis, evidenceCount }: { analysis: Analysis; evidenceCount: number }) {
+  const { t } = useI18n()
   const evidenceById = new Map(analysis.references.map((reference) => [reference.evidenceId, reference]))
 
   return (
@@ -323,14 +336,14 @@ function AnalysisView({ analysis, evidenceCount }: { analysis: Analysis; evidenc
       {/* Provenance bar */}
       <div className="panel flex flex-wrap items-center gap-x-5 gap-y-2 px-5 py-3">
         <Badge tone="signal" dot>
-          Análise concluída
+          {t('analysis.completedTitle')}
         </Badge>
         <span className="text-[0.75rem] text-ink-subtle">
           Modelo <span className="font-mono text-ink-muted">{analysis.model}</span>
         </span>
         <span className="text-[0.75rem] text-ink-subtle">{formatDateTime(analysis.createdAt)}</span>
         <span className="text-[0.75rem] text-ink-subtle">
-          {analysis.evidenceIds.length} de {evidenceCount} evidência(s) enviadas
+          {t('analysis.evidenceSent', { used: analysis.evidenceIds.length, total: evidenceCount })}
         </span>
         {analysis.usage?.totalTokens ? (
           <span className="tnum text-[0.75rem] text-ink-faint">{formatNumber(analysis.usage.totalTokens)} tokens</span>
@@ -338,30 +351,29 @@ function AnalysisView({ analysis, evidenceCount }: { analysis: Analysis; evidenc
       </div>
 
       {analysis.insufficientEvidence ? (
-        <Notice tone="caution" title="A IA considerou o conjunto de evidências insuficiente">
-          O modelo declarou explicitamente que as fontes disponíveis não sustentam conclusões fortes. Leia as
-          limitações e lacunas abaixo antes de usar este resultado.
+        <Notice tone="caution" title={t('analysis.insufficientTitle')}>
+          {t('analysis.insufficientDescription')}
         </Notice>
       ) : null}
 
       {/* Executive summary */}
       <section className="panel p-5" aria-labelledby="summary-heading">
-        <SectionHeader title="Resumo executivo" description="Síntese produzida a partir das evidências enviadas" />
+        <SectionHeader title={t('analysis.summaryTitle')} description={t('analysis.summaryDescription')} />
         <p className="mt-3 whitespace-pre-wrap text-pretty text-[0.875rem] leading-relaxed text-ink-muted">
-          {analysis.executiveSummary || 'Nenhum resumo retornado.'}
+          {analysis.executiveSummary || t('analysis.summaryEmpty')}
         </p>
       </section>
 
       {/* Findings */}
       <section className="panel p-5" aria-labelledby="findings-heading">
         <SectionHeader
-          title="Principais descobertas"
-          description="Cada item cita as evidências que o sustentam"
+          title={t('analysis.keyPointsTitle')}
+          description={t('analysis.findingsDescription')}
           actions={<span className="tnum text-[0.75rem] text-ink-faint">{analysis.findings.length}</span>}
         />
         {analysis.findings.length === 0 ? (
           <p className="mt-4 text-[0.8125rem] text-ink-faint">
-            Nenhuma descoberta foi apresentada — o modelo não encontrou suporte suficiente.
+            {t('analysis.findingsEmpty')}
           </p>
         ) : (
           <ol className="mt-4 space-y-4">
@@ -375,7 +387,11 @@ function AnalysisView({ analysis, evidenceCount }: { analysis: Analysis; evidenc
                     <p className="text-[0.875rem] leading-relaxed text-ink">{finding.statement}</p>
                     <div className="mt-2 flex flex-wrap items-center gap-1.5">
                       <Badge tone={finding.confidence === 'high' ? 'positive' : finding.confidence === 'medium' ? 'signal' : 'caution'}>
-                        confiança {finding.confidence === 'high' ? 'alta' : finding.confidence === 'medium' ? 'média' : 'baixa'}
+                        {finding.confidence === 'high'
+                      ? t('analysis.confidenceHigh')
+                      : finding.confidence === 'medium'
+                        ? t('analysis.confidenceMedium')
+                        : t('analysis.confidenceLow')}
                       </Badge>
                       {finding.evidenceIds.map((evidenceId) => {
                         const reference = evidenceById.get(evidenceId)
@@ -394,7 +410,7 @@ function AnalysisView({ analysis, evidenceCount }: { analysis: Analysis; evidenc
                           </a>
                         ) : (
                           <span key={evidenceId} className="rounded border border-negative/40 px-1.5 py-0.5 text-[0.75rem] text-negative">
-                            referência ausente
+                            {t('analysis.missingReference')}
                           </span>
                         )
                       })}
@@ -410,9 +426,9 @@ function AnalysisView({ analysis, evidenceCount }: { analysis: Analysis; evidenc
       {/* Key points + supported claims */}
       <div className="grid gap-5 lg:grid-cols-2">
         <section className="panel p-5" aria-labelledby="keypoints-heading">
-          <SectionHeader title="Pontos relevantes" description="Observações que merecem atenção" />
+          <SectionHeader title={t('analysis.keyPointsTitle')} description={t('analysis.keyPointsDescription')} />
           {analysis.keyPoints.length === 0 ? (
-            <p className="mt-3 text-[0.8125rem] text-ink-faint">Nenhum ponto destacado.</p>
+            <p className="mt-3 text-[0.8125rem] text-ink-faint">{t('analysis.keyPointsEmpty')}</p>
           ) : (
             <ul className="mt-3 space-y-2">
               {analysis.keyPoints.map((point, index) => (
@@ -426,9 +442,9 @@ function AnalysisView({ analysis, evidenceCount }: { analysis: Analysis; evidenc
         </section>
 
         <section className="panel p-5" aria-labelledby="supported-heading">
-          <SectionHeader title="Sustentado pelas fontes" description="Afirmações com respaldo direto no material enviado" />
+          <SectionHeader title={t('analysis.supportedTitle')} description={t('analysis.supportedDescription')} />
           {analysis.supportedClaims.length === 0 ? (
-            <p className="mt-3 text-[0.8125rem] text-ink-faint">Nenhuma afirmação foi marcada como diretamente sustentada.</p>
+            <p className="mt-3 text-[0.8125rem] text-ink-faint">{t('analysis.supportedEmpty')}</p>
           ) : (
             <ul className="mt-3 space-y-2">
               {analysis.supportedClaims.map((claim, index) => (
@@ -445,13 +461,13 @@ function AnalysisView({ analysis, evidenceCount }: { analysis: Analysis; evidenc
       {/* Contradictions */}
       <section className="panel p-5" aria-labelledby="contradictions-heading">
         <SectionHeader
-          title="Possíveis contradições"
-          description="Divergências entre fontes que você precisa resolver"
+          title={t('analysis.contradictionsTitle')}
+          description={t('analysis.contradictionsDescription')}
           actions={<Scale className="size-4 text-caution" aria-hidden />}
         />
         {analysis.contradictions.length === 0 ? (
           <p className="mt-3 text-[0.8125rem] text-ink-faint">
-            Nenhuma contradição foi identificada entre as evidências enviadas.
+            {t('analysis.contradictionsEmpty')}
           </p>
         ) : (
           <ul className="mt-3 space-y-3">
@@ -482,9 +498,9 @@ function AnalysisView({ analysis, evidenceCount }: { analysis: Analysis; evidenc
       {/* Limitations + gaps */}
       <div className="grid gap-5 lg:grid-cols-2">
         <section className="panel p-5" aria-labelledby="limitations-heading">
-          <SectionHeader title="Limitações" description="O que esta análise não pode afirmar" />
+          <SectionHeader title={t('analysis.limitationsTitle')} description={t('analysis.limitationsDescription')} />
           {analysis.limitations.length === 0 ? (
-            <p className="mt-3 text-[0.8125rem] text-ink-faint">Nenhuma limitação declarada pelo modelo.</p>
+            <p className="mt-3 text-[0.8125rem] text-ink-faint">{t('analysis.limitationsEmpty')}</p>
           ) : (
             <ul className="mt-3 space-y-2">
               {analysis.limitations.map((item, index) => (
@@ -498,9 +514,9 @@ function AnalysisView({ analysis, evidenceCount }: { analysis: Analysis; evidenc
         </section>
 
         <section className="panel p-5" aria-labelledby="gaps-heading">
-          <SectionHeader title="Lacunas de informação" description="O que ainda precisa ser pesquisado" />
+          <SectionHeader title={t('analysis.gapsTitle')} description={t('analysis.gapsDescription')} />
           {analysis.informationGaps.length === 0 ? (
-            <p className="mt-3 text-[0.8125rem] text-ink-faint">Nenhuma lacuna identificada.</p>
+            <p className="mt-3 text-[0.8125rem] text-ink-faint">{t('analysis.gapsEmpty')}</p>
           ) : (
             <ul className="mt-3 space-y-2">
               {analysis.informationGaps.map((item, index) => (
@@ -516,21 +532,21 @@ function AnalysisView({ analysis, evidenceCount }: { analysis: Analysis; evidenc
 
       {/* Objective alignment */}
       <section className="panel p-5" aria-labelledby="alignment-heading">
-        <SectionHeader title="Relação com o objetivo" description="Como o conjunto responde à pergunta da investigação" />
+        <SectionHeader title={t('analysis.objectiveTitle')} description={t('analysis.objectiveDescription')} />
         <p className="mt-3 whitespace-pre-wrap text-[0.875rem] leading-relaxed text-ink-muted">
-          {analysis.objectiveAlignment || 'O modelo não avaliou o alinhamento com o objetivo.'}
+          {analysis.objectiveAlignment || t('analysis.objectiveEmpty')}
         </p>
       </section>
 
       {/* References */}
       <section className="panel p-5" aria-labelledby="references-heading">
         <SectionHeader
-          title="Referências utilizadas"
-          description="Somente evidências reais desta investigação podem aparecer aqui"
+          title={t('analysis.referencesTitle')}
+          description={t('analysis.referencesDescription')}
           actions={<span className="tnum text-[0.75rem] text-ink-faint">{analysis.references.length}</span>}
         />
         {analysis.references.length === 0 ? (
-          <p className="mt-3 text-[0.8125rem] text-ink-faint">Nenhuma referência foi citada.</p>
+          <p className="mt-3 text-[0.8125rem] text-ink-faint">{t('analysis.referencesEmpty')}</p>
         ) : (
           <ol className="mt-3 space-y-2">
             {analysis.references.map((reference, index) => {
@@ -560,20 +576,19 @@ function AnalysisView({ analysis, evidenceCount }: { analysis: Analysis; evidenc
         )}
         <p className="mt-4 flex items-start gap-2 border-t border-hairline pt-3 text-[0.75rem] leading-relaxed text-ink-faint">
           <Quote className="mt-0.5 size-3 shrink-0" aria-hidden />
-          Esta síntese foi gerada por um modelo de linguagem e validada apenas quanto ao schema e à existência das
-          referências. Ela não substitui verificação factual por um pesquisador.
+          {t('analysis.disclaimer')}
         </p>
       </section>
 
       <div className="flex flex-wrap items-center gap-2">
         <Link to={`/investigations/${analysis.investigationId}/validation`}>
           <Button variant="primary" size="md" iconRight={<ArrowRight className="size-4" aria-hidden />}>
-            Validar evidências
+            {t('analysis.validateEvidence')}
           </Button>
         </Link>
         <Link to={`/investigations/${analysis.investigationId}/evidence`}>
           <Button variant="secondary" size="md" iconLeft={<Layers className="size-4" aria-hidden />}>
-            Revisar fontes
+            {t('analysis.reviewSources')}
           </Button>
         </Link>
       </div>
@@ -582,14 +597,15 @@ function AnalysisView({ analysis, evidenceCount }: { analysis: Analysis; evidenc
 }
 
 function AnalysisSkeleton() {
+  const { t } = useI18n()
   return (
     <div className="mt-6 space-y-4">
       <div className="panel flex items-center gap-3 px-5 py-3.5">
         <Sparkles className="size-4 animate-pulse text-signal" aria-hidden />
         <div>
-          <p className="text-[0.8125rem] text-ink">Gerando análise estruturada…</p>
+          <p className="text-[0.8125rem] text-ink">{t('analysis.generatingTitle')}</p>
           <p className="mt-0.5 text-[0.75rem] text-ink-faint">
-            As referências são verificadas contra as evidências reais antes de exibir o resultado.
+            {t('analysis.generatingDescription')}
           </p>
         </div>
       </div>
@@ -603,26 +619,27 @@ function AnalysisSkeleton() {
   )
 }
 
-function failureTitle(error: Error): string {
+/** Maps an API error code to a translation key; no user copy lives here. */
+function failureTitleKey(error: Error): TranslationKey {
   if (error instanceof ApiError) {
     switch (error.code) {
       case 'invalid_provider_response':
-        return 'A resposta da IA não passou na validação'
+        return 'analysis.failureInvalid'
       case 'provider_rate_limited':
-        return 'Limite do Gemini atingido'
+        return 'analysis.failureProviderRate'
       case 'provider_timeout':
-        return 'O Gemini demorou demais para responder'
+        return 'analysis.failureTimeout'
       case 'provider_auth_failed':
-        return 'Falha de autenticação no Gemini'
+        return 'analysis.failureAuth'
       case 'quota_exceeded':
-        return 'Limite de consumo atingido'
+        return 'analysis.failureQuota'
       case 'external_disabled':
-        return 'Análise por IA desativada'
+        return 'analysis.failureDisabled'
       case 'invalid_request':
-        return 'Não foi possível solicitar a análise'
+        return 'analysis.failureRequest'
       default:
-        return 'Não foi possível concluir a análise'
+        return 'analysis.failureGeneric'
     }
   }
-  return 'Não foi possível concluir a análise'
+  return 'analysis.failureGeneric'
 }

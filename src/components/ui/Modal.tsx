@@ -2,6 +2,7 @@ import { useEffect, useRef, type ReactNode } from 'react'
 import { createPortal } from 'react-dom'
 import { X } from 'lucide-react'
 import { cn } from '@/lib/utils'
+import { useI18n } from '@/i18n/I18nProvider'
 
 /**
  * Modal dialog.
@@ -27,6 +28,7 @@ export function Modal({
   footer?: ReactNode
   size?: 'sm' | 'md' | 'lg'
 }) {
+  const { t } = useI18n()
   const dialogRef = useRef<HTMLDivElement>(null)
   const previouslyFocused = useRef<HTMLElement | null>(null)
 
@@ -82,7 +84,7 @@ export function Modal({
     <div className="fixed inset-0 z-90 flex items-end justify-center p-0 sm:items-center sm:p-6">
       <button
         type="button"
-        aria-label="Fechar"
+        aria-label={t('common.close')}
         tabIndex={-1}
         onClick={onClose}
         className="animate-fade absolute inset-0 cursor-default bg-black/70 backdrop-blur-[2px]"
@@ -114,7 +116,7 @@ export function Modal({
           <button
             type="button"
             onClick={onClose}
-            aria-label="Fechar"
+            aria-label={t('common.close')}
             className="-mr-1.5 -mt-1 size-7 shrink-0 rounded text-ink-faint transition-colors hover:bg-white/5 hover:text-ink-muted"
           >
             <X aria-hidden className="mx-auto size-4" />

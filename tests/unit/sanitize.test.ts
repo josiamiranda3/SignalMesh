@@ -1,9 +1,19 @@
 import { describe, it } from 'node:test'
 import assert from 'node:assert/strict'
-import { normalizeUrl } from '../../server/repositories/sqlite.ts'
+// The pure module, not `repositories/sqlite.ts`: this suite runs under Node but
+// must not depend on the SQLite adapter to test a string transform. The adapter
+// re-exports the same function, and `normalizeUrl is shared` below pins that.
+import { normalizeUrl } from '../../server/lib/util.ts'
+import { normalizeUrl as normalizeUrlFromAdapter } from '../../server/repositories/sqlite.ts'
 import { extractDomain, excerpt, isSafeHttpUrl, stripHtml, untilNextMidnight } from '../../server/lib/sanitize.ts'
 
 describe('normalizeUrl (duplicate detection)', () => {
+  it('is the same implementation the SQLite adapter re-exports', () => {
+    // One implementation, two import paths: a divergence would silently change
+    // duplicate detection between runtimes.
+    assert.equal(normalizeUrl, normalizeUrlFromAdapter)
+  })
+
   it('ignores tracking parameters', () => {
     assert.equal(
       normalizeUrl('https://example.org/a?utm_source=news&utm_medium=email&gclid=1'),

@@ -17,8 +17,15 @@ let harness: Harness
 let client: Client
 let investigationId: string
 
+/**
+ * Boot the harness for one case.
+ *
+ * `ENABLE_PAID_OPERATIONS=true` is the default here because every case in this
+ * file exercises a provider call, and since v0.2.4.3 a paid operation needs both
+ * switches on. The cases that assert the gate itself pass `'false'` explicitly.
+ */
 async function boot(overrides: Record<string, string> = {}): Promise<void> {
-  harness = await startHarness(overrides)
+  harness = await startHarness({ ENABLE_PAID_OPERATIONS: 'true', ...overrides })
   client = await signIn(harness.base, `user-${Math.random().toString(36).slice(2)}@example.com`)
   const created = await client.request<ApiResponse<Investigation>>('POST', '/api/investigations', SAMPLE_INVESTIGATION)
   investigationId = (created.body as { data: Investigation }).data.id
@@ -432,6 +439,25 @@ describe('Gemini analysis', () => {
 })
 
 describe('cost protection', () => {
+  /**
+   * Add one evidence row through the manual endpoint.
+   *
+   * Analysis refuses to run without evidence, and since v0.2.4.2 a source can be
+   * entered without a provider — so the gate can be reached with zero external
+   * requests, which is what the assertion needs to stay meaningful.
+   */
+  async function seedEvidenceForGate(): Promise<void> {
+    const response = await client.request('POST', `/api/investigations/${investigationId}/evidence`, {
+      source: {
+        title: 'Fonte para o teste de gate',
+        url: 'https://example.org/gate-fixture',
+        snippet: 'Conteúdo de teste, sem chamada externa.',
+      },
+      allowDuplicate: false,
+    })
+    assert.equal(response.status, 201)
+  }
+
   it('enforces the per-user daily research limit', async () => {
     await boot({ RESEARCH_DAILY_LIMIT: '1' })
     const first = await client.request('POST', `/api/investigations/${investigationId}/research`, { numResults: 2, repeat: true })
@@ -489,7 +515,10 @@ describe('cost protection', () => {
   })
 
   it('blocks every provider call when external APIs are disabled', async () => {
-    await boot({ ENABLE_EXTERNAL_APIS: 'false' })
+    // `PAID=true` with `EXTERNAL=false` is an invalid configuration that
+    // `assertProductionSafety` refuses at boot, so this case pins both off —
+    // which is also the honest description of "everything disabled".
+    await boot({ ENABLE_EXTERNAL_APIS: 'false', ENABLE_PAID_OPERATIONS: 'false' })
     const research = await client.request<ApiResponse<never>>('POST', `/api/investigations/${investigationId}/research`, {})
     assert.equal(research.status, 503)
     assert.equal((research.body as { error: { code: string } }).error.code, 'external_disabled')
@@ -499,6 +528,81 @@ describe('cost protection', () => {
 
     assert.equal(harness.mock.exaRequests.length, 0)
     assert.equal(harness.mock.geminiRequests.length, 0)
+  })
+
+  it('blocks every provider call when paid operations are disabled', async () => {
+    // The v0.2.4.3 gate: external calls allowed, spending not authorised.
+    await boot({ ENABLE_EXTERNAL_APIS: 'true', ENABLE_PAID_OPERATIONS: 'false' })
+
+    const research = await client.request<ApiResponse<never>>('POST', `/api/investigations/${investigationId}/research`, {})
+    assert.equal(research.status, 503)
+    const researchError = (research.body as { error: { code: string; message: string } }).error
+    assert.equal(researchError.code, 'external_disabled')
+    assert.match(researchError.message, /ENABLE_PAID_OPERATIONS/, 'a mensagem deve nomear o interruptor')
+
+    // Analysis validates its input before reserving, so the gate can only be
+    // reached with evidence present. Seed it, then assert the refusal.
+    await seedEvidenceForGate()
+
+    const analysis = await client.request<ApiResponse<never>>('POST', `/api/investigations/${investigationId}/analyses`, {})
+    assert.equal(analysis.status, 503)
+    const analysisError = (analysis.body as { error: { code: string; message: string } }).error
+    assert.equal(analysisError.code, 'external_disabled')
+    assert.match(analysisError.message, /ENABLE_PAID_OPERATIONS/)
+
+    // Decisive: no provider was contacted on either path.
+    assert.equal(harness.mock.exaRequests.length, 0, 'a Exa não pode ter sido chamada')
+    assert.equal(harness.mock.geminiRequests.length, 0, 'o Gemini não pode ter sido chamado')
+  })
+
+  it('consumes no quota when paid operations are disabled', async () => {
+    // The gate must run *before* any counting, so a refusal leaves the allowance
+    // untouched — otherwise a blocked request would still cost the user a slot.
+    await boot({ ENABLE_EXTERNAL_APIS: 'true', ENABLE_PAID_OPERATIONS: 'false', ANALYSIS_DAILY_LIMIT: '2' })
+
+    const before = await client.request<ApiResponse<{ quota: UsageQuotaSnapshot }>>('GET', '/api/settings')
+    const quotaBefore = (before.body as { data: { quota: UsageQuotaSnapshot } }).data.quota
+    assert.equal(quotaBefore.analysis.used, 0)
+
+    await client.request('POST', `/api/investigations/${investigationId}/analyses`, {})
+    await client.request('POST', `/api/investigations/${investigationId}/research`, {})
+
+    const after = await client.request<ApiResponse<{ quota: UsageQuotaSnapshot }>>('GET', '/api/settings')
+    const quotaAfter = (after.body as { data: { quota: UsageQuotaSnapshot } }).data.quota
+    assert.equal(quotaAfter.analysis.used, 0, 'uma recusa não pode consumir cota de análise')
+    assert.equal(quotaAfter.research.used, 0, 'uma recusa não pode consumir cota de pesquisa')
+    assert.equal(quotaAfter.analysis.remaining, 2)
+  })
+
+  it('runs paid operations when both switches are on', async () => {
+    // The positive control: the gate must not block legitimate operation.
+    await boot({ ENABLE_EXTERNAL_APIS: 'true', ENABLE_PAID_OPERATIONS: 'true' })
+
+    const research = await client.request<ApiResponse<{ results: Array<Record<string, string>> }>>(
+      'POST',
+      `/api/investigations/${investigationId}/research`,
+      { numResults: 3 },
+    )
+    assert.equal(research.status, 200)
+    assert.equal(harness.mock.exaRequests.length, 1)
+
+    const results = (research.body as { data: { results: Array<Record<string, string>> } }).data.results
+    await client.request('POST', `/api/investigations/${investigationId}/evidence/bulk`, {
+      sources: results.map((item) => ({
+        title: item['title'],
+        url: item['url'],
+        snippet: '',
+        retrievedContent: item['retrievedContent'] ?? null,
+      })),
+    })
+
+    const analysis = await client.request<ApiResponse<Analysis>>(
+      'POST',
+      `/api/investigations/${investigationId}/analyses`,
+      {},
+    )
+    assert.equal(analysis.status, 201)
+    assert.equal(harness.mock.geminiRequests.length, 1)
   })
 
   it('blocks the provider when the API key is missing', async () => {

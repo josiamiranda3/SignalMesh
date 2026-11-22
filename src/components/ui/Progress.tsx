@@ -29,7 +29,7 @@ export function Progress({
       aria-valuemin={0}
       aria-valuemax={100}
       aria-label={label}
-      className={cn('h-1.5 w-full overflow-hidden rounded-full bg-[#161c29]', className)}
+      className={cn('h-1.5 w-full overflow-hidden rounded-full bg-[#1a222c]', className)}
     >
       <div
         className={cn('h-full rounded-full transition-[width] duration-500 ease-out', barTone)}
@@ -52,9 +52,9 @@ export function Meter({
   const total = segments.reduce((sum, segment) => sum + segment.value, 0)
 
   return (
-    <div className={cn('flex h-2 w-full overflow-hidden rounded-full bg-[#161c29]', className)} role="img" aria-label={ariaLabel}>
+    <div className={cn('flex h-2 w-full overflow-hidden rounded-full bg-[#1a222c]', className)} role="img" aria-label={ariaLabel}>
       {total === 0 ? (
-        <div className="h-full w-full bg-[#1b2231]" />
+        <div className="h-full w-full bg-[#1a222c]" />
       ) : (
         segments
           .filter((segment) => segment.value > 0)

@@ -27,6 +27,7 @@ import {
   investigationStatusLabel,
 } from '@/components/ui'
 import { formatDate, formatRelative, formatNumber } from '@/lib/format'
+import { useI18n } from '@/i18n/I18nProvider'
 import { cn } from '@/lib/utils'
 import { INVESTIGATION_STATUSES } from '@shared/domain'
 
@@ -39,6 +40,7 @@ import { INVESTIGATION_STATUSES } from '@shared/domain'
  * "nothing matches these filters" — the second is a dead end the user can undo.
  */
 export default function InvestigationsPage() {
+  const { t } = useI18n()
   const [search, setSearch] = useState('')
   const [status, setStatus] = useState<'' | InvestigationStatus>('')
   const [sort, setSort] = useState<'updatedAt' | 'createdAt' | 'title'>('updatedAt')
@@ -69,13 +71,13 @@ export default function InvestigationsPage() {
   return (
     <PageContainer>
       <PageHeader
-        eyebrow="Pesquisa"
-        title="Investigações"
-        description="Cada investigação é um espaço independente com tema, objetivo, fontes, análises e decisões de validação próprios."
+        eyebrow={t('investigations.eyebrow')}
+        title={t('investigations.title')}
+        description={t('investigations.description')}
         actions={
           <Link to="/investigations/new">
             <Button variant="primary" iconLeft={<Plus className="size-4" aria-hidden />}>
-              Nova investigação
+              {t('investigations.newInvestigation')}
             </Button>
           </Link>
         }
@@ -83,32 +85,36 @@ export default function InvestigationsPage() {
           summary ? (
             <>
               <span className="text-[0.75rem] text-ink-subtle">
-                {formatNumber(summary.total)} investigaç{summary.total === 1 ? 'ão' : 'ões'}
+                {t(summary.total === 1 ? 'investigations.countOne' : 'investigations.countOther', {
+                  count: formatNumber(summary.total),
+                })}
               </span>
               <span aria-hidden className="size-1 rounded-full bg-hairline-strong" />
-              <span className="text-[0.75rem] text-ink-subtle">{summary.active} em andamento</span>
+              <span className="text-[0.75rem] text-ink-subtle">
+                {t('investigations.activeCount', { count: summary.active })}
+              </span>
             </>
           ) : null
         }
       />
 
       {/* Toolbar */}
-      <div className="mt-6 flex flex-col gap-2.5 sm:flex-row sm:items-center">
+      <div className="mt-5 flex flex-col gap-2.5 sm:flex-row sm:items-center">
         <div className="relative flex-1">
           <Search className="pointer-events-none absolute left-3 top-1/2 size-3.5 -translate-y-1/2 text-ink-faint" aria-hidden />
           <Input
             type="search"
             value={search}
             onChange={(event) => setSearch(event.target.value)}
-            placeholder="Buscar por título, tema ou objetivo"
-            aria-label="Buscar investigações"
+            placeholder={t('investigations.searchPlaceholder')}
+            aria-label={t('investigations.searchLabel')}
             className="pl-9"
           />
           {search ? (
             <button
               type="button"
               onClick={() => setSearch('')}
-              aria-label="Limpar busca"
+              aria-label={t('investigations.clearSearch')}
               className="absolute right-2 top-1/2 -translate-y-1/2 rounded p-1 text-ink-faint hover:bg-white/5 hover:text-ink-muted"
             >
               <X className="size-3.5" aria-hidden />
@@ -120,12 +126,12 @@ export default function InvestigationsPage() {
           <div className="relative min-w-0 flex-1 sm:flex-none">
             <Filter className="pointer-events-none absolute left-2.5 top-1/2 size-3.5 -translate-y-1/2 text-ink-faint" aria-hidden />
             <Select
-              aria-label="Filtrar por status"
+              aria-label={t('investigations.filterLabel')}
               className="w-full pl-8 sm:w-[178px]"
               value={status}
               onChange={(event) => setStatus(event.target.value as '' | InvestigationStatus)}
               options={[
-                { value: '', label: 'Todos os status' },
+                { value: '', label: t('investigations.allStatuses') },
                 ...INVESTIGATION_STATUSES.map((value) => ({
                   value,
                   label: investigationStatusLabel(value),
@@ -137,14 +143,14 @@ export default function InvestigationsPage() {
           <div className="relative min-w-0 flex-1 sm:flex-none">
             <CalendarClock className="pointer-events-none absolute left-2.5 top-1/2 size-3.5 -translate-y-1/2 text-ink-faint" aria-hidden />
             <Select
-              aria-label="Ordenar por"
+              aria-label={t('investigations.sortLabel')}
               className="w-full pl-8 sm:w-[164px]"
               value={sort}
               onChange={(event) => setSort(event.target.value as typeof sort)}
               options={[
-                { value: 'updatedAt', label: 'Atualização' },
-                { value: 'createdAt', label: 'Criação' },
-                { value: 'title', label: 'Título' },
+                { value: 'updatedAt', label: t('investigations.sortUpdatedAt') },
+                { value: 'createdAt', label: t('investigations.sortCreatedAt') },
+                { value: 'title', label: t('investigations.sortTitle') },
               ]}
             />
           </div>
@@ -153,8 +159,8 @@ export default function InvestigationsPage() {
             variant="secondary"
             size="icon"
             className="shrink-0"
-            aria-label={direction === 'desc' ? 'Ordem decrescente' : 'Ordem crescente'}
-            title={direction === 'desc' ? 'Mais recentes primeiro' : 'Mais antigas primeiro'}
+            aria-label={direction === 'desc' ? t('investigations.directionDesc') : t('investigations.directionAsc')}
+            title={direction === 'desc' ? t('investigations.directionDescTitle') : t('investigations.directionAscTitle')}
             onClick={() => setDirection((value) => (value === 'desc' ? 'asc' : 'desc'))}
           >
             {direction === 'desc' ? <ArrowDownAZ className="size-4" aria-hidden /> : <ArrowUpAZ className="size-4" aria-hidden />}
@@ -166,10 +172,10 @@ export default function InvestigationsPage() {
         <div className="mt-5">
           <Notice
             tone="danger"
-            title="Não foi possível carregar as investigações"
+            title={t('investigations.loadError')}
             action={
               <Button size="sm" onClick={reload}>
-                Tentar novamente
+                {t('investigations.retry')}
               </Button>
             }
           >
@@ -178,15 +184,15 @@ export default function InvestigationsPage() {
         </div>
       ) : null}
 
-      <div className={cn('mt-5 transition-opacity', refreshing && 'opacity-60')}>
+      <div className={cn('mt-4 transition-opacity', refreshing && 'opacity-60')}>
         {loading ? (
           <SkeletonTable rows={5} />
         ) : items.length === 0 ? (
           hasFilters ? (
             <EmptyState
               icon={<SlidersHorizontal className="size-5" aria-hidden />}
-              title="Nenhum resultado com estes filtros"
-              description="Ajuste a busca ou o status para encontrar a investigação que procura. Seus filtros não alteram nenhum dado."
+              title={t('investigations.emptyFilteredTitle')}
+              description={t('investigations.emptyFilteredDescription')}
               action={
                 <Button
                   variant="secondary"
@@ -195,19 +201,19 @@ export default function InvestigationsPage() {
                     setStatus('')
                   }}
                 >
-                  Limpar filtros
+                  {t('investigations.clearFilters')}
                 </Button>
               }
             />
           ) : (
             <EmptyState
               icon={<FlaskConical className="size-5" aria-hidden />}
-              title="Sua primeira investigação começa aqui"
-              description="Defina um tema e um objetivo específico. O objetivo é usado para orientar a pesquisa externa, a análise e a avaliação de alinhamento de cada fonte."
+              title={t('investigations.emptyTitle')}
+              description={t('investigations.emptyDescription')}
               action={
                 <Link to="/investigations/new">
                   <Button variant="primary" iconLeft={<Plus className="size-4" aria-hidden />}>
-                    Criar investigação
+                    {t('investigations.emptyAction')}
                   </Button>
                 </Link>
               }
@@ -215,18 +221,18 @@ export default function InvestigationsPage() {
           )
         ) : (
           <div className="panel overflow-hidden">
-            <div className="hidden grid-cols-[minmax(0,1fr)_130px_128px_118px] items-center gap-4 border-b border-hairline px-5 py-2.5 md:grid">
-              <span className="meta-label">Investigação</span>
-              <span className="meta-label">Status</span>
-              <span className="meta-label">Atualizada</span>
-              <span className="meta-label">Criada</span>
+            <div className="hidden grid-cols-[minmax(0,1fr)_130px_128px_118px] items-center gap-4 border-b border-hairline bg-surface/40 px-5 py-2.5 md:grid">
+              <span className="meta-label">{t('investigations.columnInvestigation')}</span>
+              <span className="meta-label">{t('investigations.columnStatus')}</span>
+              <span className="meta-label">{t('investigations.columnUpdated')}</span>
+              <span className="meta-label">{t('investigations.columnCreated')}</span>
             </div>
-            <ul className="divide-y divide-hairline/70">
+            <ul className="divide-y divide-hairline/60">
               {items.map((investigation) => (
                 <li key={investigation.id}>
                   <Link
                     to={`/investigations/${investigation.id}`}
-                    className="group grid grid-cols-1 items-center gap-3 px-5 py-4 transition-colors hover:bg-white/[0.02] md:grid-cols-[minmax(0,1fr)_130px_128px_118px] md:gap-4"
+                    className="group grid grid-cols-1 items-center gap-3 px-5 py-4 transition-colors duration-150 hover:bg-white/[0.028] md:grid-cols-[minmax(0,1fr)_130px_128px_118px] md:gap-4"
                   >
                     <div className="min-w-0">
                       <div className="flex items-start gap-2.5">
@@ -254,7 +260,10 @@ export default function InvestigationsPage() {
               ))}
             </ul>
             <div className="border-t border-hairline px-5 py-2.5 text-[0.75rem] text-ink-faint">
-              Exibindo {items.length} de {formatNumber(data?.total ?? 0)} investigações
+              {t('investigations.footerCount', {
+                shown: items.length,
+                total: formatNumber(data?.total ?? 0),
+              })}
             </div>
           </div>
         )}

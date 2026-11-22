@@ -31,6 +31,46 @@ O princípio: **o servidor é a única autoridade**. O cliente pede; ele não de
 - Sem chave ou emissor configurados, o resolvedor **falha fechado**: retorna "não
   autenticado" em vez de confiar em um header.
 
+#### 2.1.1 `authorizedParties` (vínculo `azp`) — unificado na v0.2.4
+
+Um token válido assinado pela plataforma pode ter sido emitido para **outro app**. O SDK
+oferece `authorizedParties` para restringir o token às origens autorizadas, e o projeto já
+calculava essa lista em `config.authorizedParties` (`AZP_ORIGINS` quando definido; caso
+contrário, a origem do app).
+
+Até a v0.2.3 havia **duas rotas de verificação**:
+
+| Caminho | Usava `authorizedParties`? |
+| --- | --- |
+| Rotas de negócio (`requireUser` → `AuthResolver`) | **sim** |
+| `/api/actions/*` (`resolveIdentity` em `worker.ts`) | **não** |
+| `/ws/*` (`handleWebSocket`) | **sim** |
+
+A consequência era real: a superfície **privilegiada** aceitava um token emitido para outro
+app da mesma plataforma, enquanto todas as outras rotas o recusavam. Corrigido na v0.2.4 —
+`resolveIdentity` passou a montar a mesma configuração do `AuthResolver`, e
+`config.authorizedParties` é agora a única fonte de verdade para os três caminhos.
+
+**Semântica — é a do SDK, não uma regra inventada.** O comportamento abaixo foi lido em
+`deepspace@0.44.2` (`dist/worker.js`, `matchesAuthorizedParty`) e confirmado por teste com
+`verifyJwt` real:
+
+| `azp` no token | Resultado |
+| --- | --- |
+| Ausente | **aceito** (`if (!azp) return true`) — a plataforma nem sempre emite `azp` |
+| Igual a um padrão da lista | aceito |
+| Casa com curinga (`https://*.app.space`) | aceito |
+| Não casa com nenhum padrão | **recusado** |
+| Lista vazia/não configurada | a checagem de `azp` é **ignorada** |
+
+Duas notas que costumam ser mal interpretadas:
+
+1. **`azp` ausente não é uma brecha introduzida aqui.** É o contrato documentado do SDK: a
+   restrição é um *estreitamento* opcional, não o único controle. Assinatura, emissor e
+   expiração continuam sendo verificados em todos os casos.
+2. **A lista vazia é "sem restrição", não "negar tudo".** Por isso os dois caminhos
+   **omitem** a propriedade quando a lista está vazia, em vez de passar `[]`.
+
 ### 2.2 Adaptador local (exclusivo de teste)
 
 - Token opaco de 256 bits; só o SHA-256 é persistido.
@@ -55,6 +95,17 @@ Nenhuma rota de negócio executa sem esse passo.
 - o modo DeepSpace nunca consulta a sessão local;
 - o modo local ignora um Bearer token;
 - um Worker configurado para o adaptador local não sobe.
+
+`tests/integration/auth-authorized-parties.test.ts` (18 casos, v0.2.4) — **sem mock do
+verificador**: gera um par ES256 real, assina JWTs de verdade com `jose` e chama o
+`verifyJwt` do SDK. Cobre `azp` autorizado, não autorizado, curinga, ausente (aceito, conforme
+o contrato), origem parecida, assinatura inválida, expirado, emissor divergente, token
+malformado, `sub` ausente e ausência de material de verificação.
+
+O que esses testes **não** provam: que `resolveIdentity` (função privada de `worker.ts`)
+esteja ligada a `config.authorizedParties` no bundle do Worker — isso é verificado
+estaticamente em `tests/worker/worker-contract.test.ts`. A ligação em runtime depende do
+workerd, que não inicia neste ambiente.
 
 ---
 

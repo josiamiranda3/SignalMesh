@@ -315,6 +315,73 @@ export const usageRecordsSchema: CollectionSchema = {
   },
 }
 
+/**
+ * In-flight operation reservations.
+ *
+ * ## Why a collection and not memory
+ *
+ * The Worker builds its services per request (`services/worker.ts`), so an
+ * in-memory `Map` guarding "one paid operation per user" starts empty on every
+ * request and cannot serialise anything between concurrent invocations. The
+ * guard has to live in the storage that is shared across isolates.
+ *
+ * ## How uniqueness is enforced without inventing atomicity
+ *
+ * `uniqueOn: ['ownerId', 'operation']` makes the RecordRoom create a real
+ * `CREATE UNIQUE INDEX` in its SQLite database (verified in the installed SDK,
+ * `dist/worker.js`: `CREATE UNIQUE INDEX IF NOT EXISTS … ON …`). A second
+ * `records.create` for the same pair therefore fails with a duplicate error at
+ * the storage layer — the check is the index, not a read-then-write race.
+ *
+ * That is the only atomic primitive the SDK exposes, and it is enough: the row
+ * either exists (someone holds the reservation) or it does not. There is no
+ * transaction API, and none is needed.
+ *
+ * ## Lifecycle
+ *
+ * `expiresAt` bounds the reservation so a crashed request cannot lock a user
+ * out forever: `acquire` treats an expired row as free and deletes it before
+ * retrying. `release` deletes the row on completion, success or failure.
+ *
+ * The SQLite adapter mirrors the same semantics with a table and a unique index,
+ * so both runtimes behave identically.
+ */
+export const quotaReservationsSchema: CollectionSchema = {
+  name: 'quota_reservations',
+  columns: [
+    {
+      name: 'ownerId',
+      storage: 'text',
+      interpretation: 'plain',
+      required: true,
+      /** Same ownership contract as every other domain collection. */
+      userBound: true,
+      immutable: true,
+    },
+    {
+      name: 'operation',
+      storage: 'text',
+      interpretation: { kind: 'select', options: ['research', 'analysis'] },
+      required: true,
+    },
+    /** Random token identifying the holder, so only it may release. */
+    { name: 'token', storage: 'text', interpretation: 'plain', required: true },
+    /** Epoch milliseconds; an expired reservation is reclaimable. */
+    { name: 'expiresAt', storage: 'number', interpretation: 'plain', required: true },
+    { name: 'createdAt', storage: 'text', interpretation: 'plain' },
+  ],
+  ownerField: 'ownerId',
+  /** The atomic guard: one live reservation per user and operation. */
+  uniqueOn: ['ownerId', 'operation'],
+  permissions: {
+    viewer: { read: 'own', create: false, update: false, delete: false },
+    // A member may create and delete only their own reservation — that is
+    // exactly acquire/release, and it cannot touch anyone else's.
+    member: { read: 'own', create: true, update: false, delete: 'own' },
+    admin: { read: true, create: true, update: true, delete: true },
+  },
+}
+
 export const researchQueriesSchema: CollectionSchema = {
   name: 'research_queries',
   columns: [
@@ -392,6 +459,7 @@ export const schemas: CollectionSchema[] = [
   usageRecordsSchema,
   researchQueriesSchema,
   appSettingsSchema,
+  quotaReservationsSchema,
 ]
 
 /** Collection names, so the adapter and the tests cannot drift from the schemas. */
@@ -405,6 +473,7 @@ export const COLLECTIONS = {
   usageRecords: 'usage_records',
   researchQueries: 'research_queries',
   appSettings: 'app_settings',
+  quotaReservations: 'quota_reservations',
 } as const
 
 export type CollectionName = (typeof COLLECTIONS)[keyof typeof COLLECTIONS]

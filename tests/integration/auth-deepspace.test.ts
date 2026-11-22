@@ -1,5 +1,6 @@
 import { describe, it } from 'node:test'
 import assert from 'node:assert/strict'
+import { readFileSync } from 'node:fs'
 import { AuthResolver } from '../../server/lib/auth-resolver.ts'
 import { userRecordFromClaims } from '../../server/lib/auth-context.ts'
 import { assertProductionSafety, loadConfig } from '../../server/config.ts'
@@ -130,6 +131,54 @@ describe('config: runtime determines the auth mode', () => {
         }),
       /ENABLE_PAID_OPERATIONS requires ENABLE_EXTERNAL_APIS/,
     )
+  })
+})
+
+describe('config: the deployed origin is explicit, never loopback', () => {
+  /**
+   * `appOrigin` feeds both the CSRF allow-list and `authorizedParties` (the
+   * `azp` a platform token may carry). A production boot that silently kept the
+   * loopback default would bind token verification to an origin no browser can
+   * present — an auth failure that looks like a bug in the token.
+   */
+
+  it('refuses a production boot whose origin is the loopback default', () => {
+    const env = { NODE_ENV: 'production' }
+    const config = loadConfig(env, { runtime: 'worker' })
+    assert.equal(config.appOrigin, 'http://127.0.0.1:8787')
+    assert.throws(
+      () => assertProductionSafety(config, env),
+      /APP_ORIGIN must be the app's public origin/,
+    )
+  })
+
+  it('accepts a production boot with the deployed origin', () => {
+    const env = { NODE_ENV: 'production', APP_ORIGIN: 'https://signalmess.app.space' }
+    const config = loadConfig(env, { runtime: 'worker' })
+    assert.doesNotThrow(() => assertProductionSafety(config, env))
+  })
+
+  it('derives authorizedParties from the deployed origin, not from the default', () => {
+    const env = { NODE_ENV: 'production', APP_ORIGIN: 'https://signalmess.app.space' }
+    const config = loadConfig(env, { runtime: 'worker' })
+    assert.deepEqual(config.authorizedParties, ['https://signalmess.app.space'])
+  })
+
+  it('still allows a loopback origin for local development', () => {
+    // `deepspace dev start` runs this same Worker on localhost, defaults
+    // NODE_ENV to production, and does not inject APP_ORIGIN. Only an explicit
+    // NODE_ENV=production marks a real deployment, so local dev keeps working.
+    const env = {}
+    const config = loadConfig(env, { runtime: 'worker' })
+    assert.equal(config.appOrigin, 'http://127.0.0.1:8787')
+    assert.doesNotThrow(() => assertProductionSafety(config, env))
+  })
+
+  it('declares the production origin in wrangler.toml', () => {
+    // The deploy reads `[vars]`, so the value must live there rather than in a
+    // `.env` the platform never sees.
+    const toml = readFileSync(new URL('../../wrangler.toml', import.meta.url), 'utf8')
+    assert.match(toml, /^\s*APP_ORIGIN\s*=\s*"https:\/\/signalmess\.app\.space"\s*$/m)
   })
 })
 

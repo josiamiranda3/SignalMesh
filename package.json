@@ -1,7 +1,7 @@
 {
   "name": "signalmess",
   "private": true,
-  "version": "0.2.1",
+  "version": "0.2.4.3",
   "type": "module",
   "description": "SIGNALMESH — Research & Evidence Intelligence Platform",
   "engines": {
@@ -18,6 +18,7 @@
     "typecheck": "tsc --noEmit && tsc --noEmit -p tsconfig.server.json",
     "lint": "eslint .",
     "check:encoding": "node --experimental-transform-types --disable-warning=ExperimentalWarning scripts/check-encoding.ts",
+    "check:design": "node --experimental-transform-types --disable-warning=ExperimentalWarning scripts/check-design-system.ts",
     "test": "node --test --test-isolation=none --experimental-transform-types --disable-warning=ExperimentalWarning \"tests/unit/**/*.test.ts\" \"tests/integration/**/*.test.ts\" \"tests/worker/*.test.ts\"",
     "test:unit": "node --test --test-isolation=none --experimental-transform-types --disable-warning=ExperimentalWarning \"tests/unit/**/*.test.ts\"",
     "test:integration": "node --test --test-isolation=none --experimental-transform-types --disable-warning=ExperimentalWarning \"tests/integration/**/*.test.ts\"",
@@ -27,7 +28,7 @@
     "test:worker": "node --experimental-transform-types --disable-warning=ExperimentalWarning tests/worker/run-worker-smoke.ts",
     "audit:design": "node --experimental-transform-types --disable-warning=ExperimentalWarning tests/e2e/design-audit.ts",
     "migrate:records": "node --experimental-transform-types --disable-warning=ExperimentalWarning scripts/migrate-to-records.ts",
-    "verify": "npm run typecheck && npm run lint && npm run check:encoding && npm run build && npm run test",
+    "verify": "npm run typecheck && npm run lint && npm run check:encoding && npm run check:design && npm run build && npm run test",
     "verify:all": "npm run verify && npm run test:e2e && npm run test:flows && npm run audit:design && npm run test:worker"
   },
   "dependencies": {

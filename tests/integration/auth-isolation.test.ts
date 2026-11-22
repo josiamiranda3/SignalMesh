@@ -25,7 +25,9 @@ let bruno: Client
 let anaInvestigationId: string
 
 before(async () => {
-  harness = await startHarness()
+  // Cross-user isolation is exercised through real (mocked-provider) research,
+  // which since v0.2.4.3 requires the paid switch to be on as well.
+  harness = await startHarness({ ENABLE_PAID_OPERATIONS: 'true' })
   ana = await signIn(harness.base, 'ana@example.com', 'Ana')
   bruno = await signIn(harness.base, 'bruno@example.com', 'Bruno')
 

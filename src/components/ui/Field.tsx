@@ -10,10 +10,10 @@ import { cn } from '@/lib/utils'
  */
 
 const FIELD_BASE =
-  'w-full rounded-md border bg-[#0b1018] text-sm text-ink placeholder:text-ink-faint transition-colors duration-150 disabled:opacity-50 disabled:cursor-not-allowed'
+  'w-full rounded-md border bg-canvas/80 text-sm text-ink placeholder:text-ink-faint transition-colors duration-150 disabled:opacity-50 disabled:cursor-not-allowed'
 
 const FIELD_STATE = {
-  normal: 'border-hairline-strong hover:border-[#37425a] focus:border-signal focus:outline-none focus:ring-2 focus:ring-signal/20',
+  normal: 'border-hairline-strong hover:border-hairline-strong focus:border-signal focus:outline-none focus:ring-2 focus:ring-signal/20',
   invalid: 'border-negative/70 focus:border-negative focus:outline-none focus:ring-2 focus:ring-negative/20',
 }
 

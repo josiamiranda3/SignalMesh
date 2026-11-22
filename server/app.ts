@@ -5,7 +5,10 @@ import type { Services } from './services/index.ts'
 import { AppError } from './lib/errors.ts'
 import { withServices, csrfGuard, type AppEnv } from './http/middleware.ts'
 import { createAuthRoutes } from './http/auth-routes.ts'
+import { createAuthProxyRoutes, isPlatformAuthPath } from './http/auth-proxy.ts'
 import { createApiRoutes, toErrorResponse } from './http/api-routes.ts'
+import { registerActionRoutes } from './http/action-routes.ts'
+import type { ActionToolsPort } from './actions/types.ts'
 
 /**
  * Application assembly.
@@ -28,10 +31,28 @@ export interface CreateAppOptions {
   config: AppConfig
   /** Report the storage backend in the health payload. */
   storage: 'sqlite' | 'records'
+  /**
+   * Wire the server-action surface.
+   *
+   * Both runtimes mount the same route; only identity resolution differs
+   * (verified JWT on the Worker, local session under Node). That keeps one
+   * behaviour for the administrative path and lets the HTTP tests exercise it.
+   */
+  actions?: {
+    resolveCaller: (request: Request) => Promise<string | null>
+    environment: { OWNER_USER_ID?: string }
+  }
+  /**
+   * Platform auth-worker base URL (`AUTH_WORKER_URL`), injected by the deploy.
+   *
+   * Present only on the Worker runtime; the Node runtime has no auth worker and
+   * mounts no proxy.
+   */
+  authWorkerUrl?: string
 }
 
 export function createApp(options: CreateAppOptions): Hono<AppEnv> {
-  const { services, config, storage } = options
+  const { services, config, storage, actions, authWorkerUrl } = options
 
   const app = new Hono<AppEnv>()
   app.use('*', withServices(services))
@@ -42,7 +63,7 @@ export function createApp(options: CreateAppOptions): Hono<AppEnv> {
       success: true as const,
       data: {
         status: 'ok' as const,
-        version: '0.2.0',
+        version: '0.2.4.3',
         time: new Date().toISOString(),
         database: 'ok' as const,
         storage,
@@ -52,8 +73,54 @@ export function createApp(options: CreateAppOptions): Hono<AppEnv> {
     }),
   )
 
-  app.use('/api/*', csrfGuard(services))
+  // CSRF guard for the app's own API surface.
+  //
+  // Scope, and why it is explicit rather than a blanket `/api/*`:
+  // the SDK's browser client drives the platform auth worker through this
+  // origin (`POST /api/auth/token` from `getAuthToken()`, `signIn.email()`,
+  // `signOut()`, the OAuth callbacks). Those requests carry no
+  // `x-signalmess-request` marker — that header is this app's convention, and
+  // the auth worker knows nothing about it. A blanket guard therefore answered
+  // **403 before the proxy ran**, so a signed-in browser could never obtain the
+  // JWT that `resolveIdentity` requires, and every authenticated route looked
+  // like "not logged in".
+  //
+  // The exemption is exactly the set the proxy forwards (`isPlatformAuthPath`,
+  // one source of truth with `auth-proxy.ts`). Those requests are not
+  // unauthenticated: the platform session cookie is their credential, and the
+  // auth worker validates it and applies its own CSRF/origin checks. The app
+  // adds no trust of its own — the proxy forwards and copies, it never reads an
+  // identity header.
+  //
+  // Everything the app owns stays guarded: `/api/auth/config`, `/me`, `/login`,
+  // `/logout` are NOT in that set, so they keep the marker requirement, and so
+  // does the entire rest of `/api/*`.
+  app.use('/api/*', async (c, next) => {
+    if (isPlatformAuthPath(new URL(c.req.url).pathname)) return next()
+    return csrfGuard(services)(c, next)
+  })
   app.route('/api/auth', createAuthRoutes())
+
+  // Platform auth proxy. Registered **after** the app's own auth routes so the
+  // owned endpoints (`/config`, `/me`, `/login`, `/logout`) keep precedence, and
+  // before the generic API router so `/api/auth/token` and the OAuth callbacks
+  // reach the auth worker instead of the app's 404 handler.
+  //
+  // Only the Worker runtime has an auth worker to forward to; the Node runtime
+  // authenticates through its local adapter, and a request that falls through
+  // here still gets the owned routes above.
+  if (config.authMode === 'deepspace') {
+    app.route('/api/auth', createAuthProxyRoutes({ authWorkerUrl: authWorkerUrl }))
+  }
+
+  if (actions) {
+    registerActionRoutes(app as unknown as Hono<AppEnv>, {
+      resolveCaller: actions.resolveCaller,
+      environment: actions.environment,
+      createTools: () => createUnavailableTools(),
+    })
+  }
+
   app.route('/api', createApiRoutes())
 
   app.notFound((c) => {
@@ -85,4 +152,25 @@ export function createApp(options: CreateAppOptions): Hono<AppEnv> {
   })
 
   return app
+}
+
+/**
+ * Tools for runtimes without a RecordRoom.
+ *
+ * The Node runtime stores data in SQLite and has no Durable Object, so the
+ * migration action — which exists to reach one — cannot run there. Rather than
+ * simulate it (which would let a test "pass" against a path production does not
+ * have), every tool reports why it is unavailable. The Worker supplies the real
+ * tools; see `worker.ts`.
+ */
+function createUnavailableTools(): ActionToolsPort {
+  const unavailable = async (): Promise<never> => {
+    throw new Error('A ação de migração requer o runtime DeepSpace (RecordRoom).')
+  }
+  return {
+    create: unavailable,
+    update: unavailable,
+    get: unavailable,
+    query: unavailable,
+  } as unknown as ActionToolsPort
 }

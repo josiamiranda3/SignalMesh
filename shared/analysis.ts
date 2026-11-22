@@ -207,6 +207,14 @@ export function buildAnalysisPrompt(input: {
   investigationTitle: string
   topic: string
   objective: string
+  /**
+   * Language the analysis must be written in.
+   *
+   * Only the *output* language changes: the evidence, its titles and its URLs are
+   * passed through untouched, and every rule below stays identical. Absent means
+   * Portuguese, which is what every already-stored analysis was written in.
+   */
+  outputLanguage?: 'en' | 'pt-BR'
   evidences: Array<{
     id: string
     title: string
@@ -217,6 +225,11 @@ export function buildAnalysisPrompt(input: {
     missingData: string[]
   }>
 }): { systemInstruction: string; userPrompt: string } {
+  const outputLanguage = input.outputLanguage ?? 'pt-BR'
+  const languageRule =
+    outputLanguage === 'en'
+      ? '7. Write in English, with objective language and no redundancy. Keep every identifier, URL, model name and quoted source text exactly as provided.'
+      : '7. Escreva em português do Brasil, com linguagem objetiva e sem redundância. Mantenha todo identificador, URL, nome de modelo e texto citado da fonte exatamente como fornecido.'
   const systemInstruction = [
     'Você é um analista de pesquisa do SignalMesh.',
     'Sua tarefa é sintetizar EXCLUSIVAMENTE as evidências fornecidas em relação ao objetivo da investigação.',
@@ -228,7 +241,7 @@ export function buildAnalysisPrompt(input: {
     '4. Se houver contradição entre fontes, descreva-a em contradictions citando as evidências envolvidas. Não escolha arbitrariamente uma versão como verdadeira.',
     '5. Diferencie o que é sustentado por fonte do que é inferência sua. Não apresente inferência como fato comprovado.',
     '6. Não emita juízo de veracidade científica ou jurídica; você organiza e confronta evidências.',
-    '7. Escreva em português do Brasil, com linguagem objetiva e sem redundância.',
+    languageRule,
     '8. citedEvidenceIds deve conter todos os ids efetivamente citados no resultado.',
   ].join('\n')
 

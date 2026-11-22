@@ -1,6 +1,7 @@
 import { createContext, useCallback, useContext, useMemo, useState, type ReactNode } from 'react'
 import { AlertTriangle, CheckCircle2, Info, X, XCircle } from 'lucide-react'
 import { cn } from '@/lib/utils'
+import { useI18n } from '@/i18n/I18nProvider'
 
 /**
  * Toast system.
@@ -36,6 +37,7 @@ const TONE_STYLE: Record<ToastTone, { border: string; icon: string; Icon: typeof
 }
 
 export function ToastProvider({ children }: { children: ReactNode }) {
+  const { t } = useI18n()
   const [toasts, setToasts] = useState<Toast[]>([])
 
   const push = useCallback((tone: ToastTone, title: string, detail?: string) => {
@@ -84,7 +86,7 @@ export function ToastProvider({ children }: { children: ReactNode }) {
               </div>
               <button
                 type="button"
-                aria-label="Fechar notificação"
+                aria-label={t('common.closeToast')}
                 onClick={() => setToasts((current) => current.filter((item) => item.id !== toast.id))}
                 className="-mr-1 -mt-1 size-6 shrink-0 rounded text-ink-faint transition-colors hover:bg-white/5 hover:text-ink-muted"
               >

@@ -32,8 +32,21 @@ export const httpUrl = z
     { message: 'URL inválida: apenas http e https são permitidos' },
   )
 
+/**
+ * A single keyword.
+ *
+ * The messages are explicit because a bare `.min()/.max()` produces zod's
+ * English default ("Too small: expected string to have >=1 characters"), which
+ * reached the form as a raw internal string. The limits are unchanged.
+ */
+const keywordItem = z
+  .string()
+  .trim()
+  .min(1, 'Palavra-chave vazia: informe um termo')
+  .max(64, 'Cada palavra-chave deve ter no máximo 64 caracteres')
+
 export const keywordsSchema = z
-  .array(z.string().trim().min(1).max(64))
+  .array(keywordItem)
   .max(20, 'Máximo de 20 palavras-chave')
   .default([])
 
@@ -50,7 +63,7 @@ const investigationFields = z.object({
   description: z.string().trim().max(4000, 'Descrição muito longa'),
   objective: trimmed(10, 2000, 'Objetivo'),
   topic: trimmed(3, 300, 'Tema'),
-  keywords: z.array(z.string().trim().min(1).max(64)).max(20, 'Máximo de 20 palavras-chave'),
+  keywords: z.array(keywordItem).max(20, 'Máximo de 20 palavras-chave'),
   status: z.enum(INVESTIGATION_STATUSES),
 })
 
@@ -128,6 +141,14 @@ export const analysisRequestSchema = z.object({
   evidenceIds: z.array(z.string().min(1).max(80)).max(60).optional(),
   /** Re-run while an identical analysis is already stored. */
   repeat: z.boolean().default(false),
+  /**
+   * Language the analysis text must be produced in.
+   *
+   * Defaults to Portuguese so a caller that predates this field (or the Worker,
+   * which does not send it) keeps the behaviour every stored analysis was
+   * created with. The evidence itself is never translated.
+   */
+  outputLanguage: z.enum(['en', 'pt-BR']).default('pt-BR'),
 })
 
 export const relevanceWeightsSchema = z

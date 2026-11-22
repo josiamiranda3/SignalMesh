@@ -19,9 +19,11 @@ import type { DOBindings, DOManifest } from 'deepspace/worker'
 import { schemas } from './src/schemas.ts'
 import { assertProductionSafety, loadConfig } from './server/config.ts'
 import { createApp } from './server/app.ts'
-import { createWorkerServices, type RecordRoomNamespace } from './server/services/worker.ts'
+import { createWorkerServices, createRoomCaller, type RecordRoomNamespace } from './server/services/worker.ts'
 import { createApiRoutes } from './server/http/api-routes.ts'
 import { createAuthRoutes } from './server/http/auth-routes.ts'
+import { createActionTools, registerActionRoutes } from './server/http/action-routes.ts'
+import type { AppEnv } from './server/http/middleware.ts'
 
 /**
  * Durable Object manifest.
@@ -43,6 +45,14 @@ export interface Env extends DOBindings<typeof __DO_MANIFEST__> {
   /** Platform-injected JWT verification material — never a shared secret. */
   AUTH_JWT_PUBLIC_KEY: string
   AUTH_JWT_ISSUER: string
+  /**
+   * Platform auth-worker base URL, injected by the deploy.
+   *
+   * The app proxies `/api/auth/*` to it so the browser can obtain a platform
+   * JWT (`POST /api/auth/token`) and run the OAuth callback flow. Absent only
+   * on a misconfigured deployment, where the proxy fails closed with 503.
+   */
+  AUTH_WORKER_URL?: string
   /** The account that owns this app; used by the admin transport. */
   OWNER_USER_ID: string
 
@@ -98,8 +108,9 @@ function envBag(env: Env): Record<string, string | undefined> {
 
 export default {
   async fetch(request: Request, env: Env, ctx: ExecutionContext): Promise<Response> {
-    const config = loadConfig(envBag(env), { runtime: 'worker' })
-    assertProductionSafety(config)
+    const bindings = envBag(env)
+    const config = loadConfig(bindings, { runtime: 'worker' })
+    assertProductionSafety(config, bindings)
 
     const url = new URL(request.url)
 
@@ -122,6 +133,44 @@ export default {
     if (url.pathname.startsWith('/api/')) {
       const identity = await resolveIdentity(request, env, config)
 
+      // -------------------------------------------------------------------
+      // Server actions (privileged surface) — route implemented by SIGNALMESH
+      // -------------------------------------------------------------------
+      // `/api/actions/*` is our own Hono route, not a platform-mounted one: the
+      // SDK supplies the handler contract and the `X-App-Action` transport, but
+      // routing, JWT verification and authorization are this worker's job.
+      //
+      // Mounted before the generic API app so the action route owns its own
+      // authentication: it verifies the JWT itself and refuses unknown names,
+      // instead of relying on `requireUser` plus a name check scattered across
+      // handlers. Each action carries its own policy (`selfScoped`/`ownerOnly`);
+      // `migrateRecords` is self-scoped, so any verified caller may migrate
+      // their own data and no one else's.
+      if (url.pathname.startsWith('/api/actions/')) {
+        const actionApp = new Hono<AppEnv>()
+        registerActionRoutes(actionApp, {
+          resolveCaller: async (request) => {
+            const resolved = await resolveIdentity(request, env, config)
+            return resolved?.userId ?? null
+          },
+          environment: { OWNER_USER_ID: env.OWNER_USER_ID },
+          createTools: (callerId) =>
+            createActionTools(
+              createRoomCaller({
+                env: workerBindings(env) as never,
+                userId: callerId,
+                // The action surface runs with RBAC off, which is what makes
+                // cross-collection work possible. `userBound` still stamps
+                // `callerId` on every write, so this cannot create a row for
+                // another account; reading another account's row is prevented
+                // by the action's own ownership check.
+                appAction: true,
+              }),
+            ),
+        })
+        return actionApp.fetch(request, env, ctx)
+      }
+
       // An unauthenticated request still needs the app mounted so it can get a
       // structured 401 from `requireUser` rather than a bare runtime error.
       if (!identity) {
@@ -141,7 +190,12 @@ export default {
         userId: identity.userId,
         ownerUserId: env.OWNER_USER_ID,
       })
-      const app = createApp({ services, config, storage: 'records' })
+      const app = createApp({
+        services,
+        config,
+        storage: 'records',
+        authWorkerUrl: env.AUTH_WORKER_URL,
+      })
       return app.fetch(request, env, ctx)
     }
 
@@ -191,6 +245,23 @@ function workerBindings(env: Env): {
  * authorize the route). The duplication is deliberate — the transport must be
  * bound to the caller *before* any repository call can happen, and the route
  * must independently refuse an unauthenticated request.
+ *
+ * ## Why `authorizedParties` is passed here too
+ *
+ * `server/services/worker.ts` configures `AuthResolver` with
+ * `authorizedParties: config.authorizedParties`, but that resolver only protects
+ * the routes that go through `requireUser`. The privileged `/api/actions/*`
+ * surface authenticates through **this** function instead, so before v0.2.4 it
+ * verified signature, issuer and expiry but not the `azp` binding — a token
+ * minted for a different app of the same platform would have been accepted
+ * here while being refused everywhere else. Both paths now share the same
+ * policy; `config` is the single source of truth.
+ *
+ * The semantics are the SDK's, not ours: `verifyJwt` matches `azp` against the
+ * configured patterns and **accepts a token with no `azp` claim**, because the
+ * platform does not always set one. That is a narrowing of an otherwise valid
+ * token, not the only control — signature, issuer and expiry are still enforced
+ * inside `verifyJwt`.
  */
 async function resolveIdentity(
   request: Request,
@@ -213,15 +284,21 @@ async function resolveIdentity(
   // The platform injects these; without them nothing can be verified.
   if (!env.AUTH_JWT_PUBLIC_KEY || !env.AUTH_JWT_ISSUER) return null
 
-  const outcome = await verifyJwt(
-    { publicKey: env.AUTH_JWT_PUBLIC_KEY, issuer: env.AUTH_JWT_ISSUER },
-    token,
-  )
+  // Same shape `AuthResolver` builds: the property is omitted when the list is
+  // empty, so `verifyJwt` sees "no party constraint" rather than "match nothing".
+  const verifierConfig: {
+    publicKey: string
+    issuer: string
+    authorizedParties?: string[]
+  } = { publicKey: env.AUTH_JWT_PUBLIC_KEY, issuer: env.AUTH_JWT_ISSUER }
+  if (config.authorizedParties.length > 0) {
+    verifierConfig.authorizedParties = config.authorizedParties
+  }
+
+  const outcome = await verifyJwt(verifierConfig, token)
   const result = outcome.result as { userId?: string } | null
   if (!result?.userId) return null
 
-  // Reserved: `config` is threaded for future audience/party checks.
-  void config
   return { userId: result.userId }
 }
 
@@ -229,15 +306,23 @@ async function resolveIdentity(
  * Minimal app for unauthenticated requests.
  *
  * It mounts the health probe and the auth routes so a signed-out browser can
- * read `/api/auth/config`, and lets every private route answer 401 through the
- * normal middleware.
+ * read `/api/auth/config` **and complete sign-in**: the platform proxy mounted
+ * by `createApp` is what serves `/api/auth/token` and the OAuth callbacks, and
+ * those requests arrive without a credential by definition. Mounting the app
+ * without `authWorkerUrl` here would leave a signed-out visitor unable to sign
+ * in at all.
  */
 function createPublicApp(
   services: ReturnType<typeof createWorkerServices>,
   config: ReturnType<typeof loadConfig>,
-  _env: Env,
+  env: Env,
 ): Hono {
-  const app = createApp({ services, config, storage: 'records' })
+  const app = createApp({
+    services,
+    config,
+    storage: 'records',
+    authWorkerUrl: env.AUTH_WORKER_URL,
+  })
   // The full app already mounts auth routes; this wrapper exists so the intent
   // is explicit at the call site.
   void createApiRoutes
@@ -306,6 +391,5 @@ async function handleWebSocket(
   )
 
   const stub = env.RECORD_ROOMS.get(env.RECORD_ROOMS.idFromName(scopeId))
-  void config
   return stub.fetch(roomRequest)
 }

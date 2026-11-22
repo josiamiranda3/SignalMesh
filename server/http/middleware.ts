@@ -4,7 +4,8 @@ import type { Services } from '../services/index.ts'
 import type { UserRecord } from '../types.ts'
 import type { AuthMode } from '../lib/auth-context.ts'
 import { errors } from '../lib/errors.ts'
-import { CSRF_HEADER, CSRF_VALUE, SESSION_COOKIE, parseCookieHeader } from '../lib/sessions.ts'
+import { evaluateCsrfPolicy } from '../lib/csrf-policy.ts'
+import { SESSION_COOKIE, parseCookieHeader } from '../lib/session-cookies.ts'
 
 /**
  * Request context and auth middleware.
@@ -56,15 +57,25 @@ export function withServices(services: Services): MiddlewareHandler<AppEnv> {
  * browser report *their* origin and this app's origin at the same time, and the
  * marker header still cannot be set cross-origin without a preflight the app
  * never grants.
+ *
+ * ## The authenticated-bearer exemption
+ *
+ * A request whose credential the browser cannot attach on its own — a verified
+ * `Authorization: Bearer` token, with no session cookie on the request — is not
+ * in the CSRF threat class and does not need the marker. The decision lives in
+ * `server/lib/csrf-policy.ts`; read the module comment there before changing
+ * anything about it. Two properties are load-bearing:
+ *
+ *  - the token is **verified** before the exemption is granted, so an arbitrary
+ *    `Bearer` string buys nothing;
+ *  - the presence of *any* session cookie keeps the request in the cookie lane,
+ *    so an ambient credential can never be laundered through the exemption.
+ *
+ * The marker is not authentication and is never treated as such: identity still
+ * comes from `services.auth.resolve` / the action route's `resolveCaller`.
  */
 export function csrfGuard(services: Services): MiddlewareHandler<AppEnv> {
   return async (c, next) => {
-    const method = c.req.method
-    if (method === 'GET' || method === 'HEAD' || method === 'OPTIONS') {
-      await next()
-      return
-    }
-
     const origin = c.req.header('origin')
     if (origin) {
       const requestOrigin = new URL(c.req.url).origin
@@ -75,8 +86,20 @@ export function csrfGuard(services: Services): MiddlewareHandler<AppEnv> {
       }
     }
 
-    if (c.req.header(CSRF_HEADER) !== CSRF_VALUE) {
-      throw errors.forbidden('Cabeçalho de proteção ausente. Recarregue a página e tente novamente.')
+    const decision = await evaluateCsrfPolicy({
+      method: c.req.method,
+      headers: c.req.raw.headers,
+      path: new URL(c.req.url).pathname,
+      verifyCredential: async () => {
+        const resolved = await services.auth.resolve(c.req.raw)
+        return resolved ? { mode: resolved.mode, user: resolved.user, claims: resolved.claims } : null
+      },
+    })
+
+    if (!decision.allowed) {
+      throw errors.forbidden(
+        'Cabeçalho de proteção ausente. Recarregue a página e tente novamente.',
+      )
     }
 
     await next()

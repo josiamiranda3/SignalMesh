@@ -23,6 +23,14 @@ DEEPSPACE_APP_ID = "__APP_ID__"
 APP_NAME = "signalmess"
 NATIVE_AUTH_REDIRECT_URIS = ""
 
+# The app's public origin, which the deploy publishes to `<name>.app.space`.
+# `loadConfig` derives `authorizedParties` (the `azp` a platform token may carry)
+# from this value, and `assertProductionSafety` refuses a production boot whose
+# origin is still a loopback default. It must therefore be the deployed host, not
+# `http://127.0.0.1:8787` — that form exists only for `deepspace dev start`,
+# which runs the Worker locally and does not read this file's `[vars]` for it.
+APP_ORIGIN = "https://signalmess.app.space"
+
 # SignalMesh non-secret configuration.
 # Both cost switches stay OFF. Turning them on requires the owner's explicit
 # authorization, and `ENABLE_PAID_OPERATIONS` additionally requires

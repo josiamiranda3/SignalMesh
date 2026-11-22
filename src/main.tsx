@@ -6,6 +6,7 @@ import '@fontsource-variable/jetbrains-mono'
 import './styles.css'
 
 import { AuthProvider, useAuth } from './app/AuthProvider'
+import { I18nProvider, useI18n } from './i18n/I18nProvider'
 import { PlatformProviders } from './app/PlatformProviders'
 import AppShell from './components/layout/AppShell'
 import LandingPage from './pages/LandingPage'
@@ -33,8 +34,9 @@ import { FullPageLoading } from './components/layout/FullPageLoading'
  */
 function RequireAuth({ children }: { children: React.ReactNode }) {
   const { status } = useAuth()
+  const { t } = useI18n()
 
-  if (status === 'loading') return <FullPageLoading label="Verificando sessão" />
+  if (status === 'loading') return <FullPageLoading label={t('common.verifyingSession')} />
 
   if (status === 'anonymous') {
     const target = `${window.location.pathname}${window.location.search}`
@@ -47,34 +49,36 @@ function RequireAuth({ children }: { children: React.ReactNode }) {
 function App() {
   return (
     <PlatformProviders>
-      <AuthProvider>
-        <Routes>
-          <Route path="/" element={<LandingPage />} />
-          <Route path="/login" element={<LoginPage />} />
+      <I18nProvider>
+        <AuthProvider>
+          <Routes>
+            <Route path="/" element={<LandingPage />} />
+            <Route path="/login" element={<LoginPage />} />
 
-          <Route
-            element={
-              <RequireAuth>
-                <AppShell />
-              </RequireAuth>
-            }
-          >
-            <Route path="/dashboard" element={<DashboardPage />} />
-            <Route path="/investigations" element={<InvestigationsPage />} />
-            <Route path="/investigations/new" element={<NewInvestigationPage />} />
-            <Route path="/investigations/:id" element={<InvestigationDetailPage />} />
-            <Route path="/investigations/:id/research" element={<ResearchPage />} />
-            <Route path="/investigations/:id/evidence" element={<EvidencePage />} />
-            <Route path="/investigations/:id/analysis" element={<AnalysisPage />} />
-            <Route path="/investigations/:id/validation" element={<ValidationPage />} />
-            <Route path="/validation" element={<ValidationPage />} />
-            <Route path="/history" element={<HistoryPage />} />
-            <Route path="/settings" element={<SettingsPage />} />
-          </Route>
+            <Route
+              element={
+                <RequireAuth>
+                  <AppShell />
+                </RequireAuth>
+              }
+            >
+              <Route path="/dashboard" element={<DashboardPage />} />
+              <Route path="/investigations" element={<InvestigationsPage />} />
+              <Route path="/investigations/new" element={<NewInvestigationPage />} />
+              <Route path="/investigations/:id" element={<InvestigationDetailPage />} />
+              <Route path="/investigations/:id/research" element={<ResearchPage />} />
+              <Route path="/investigations/:id/evidence" element={<EvidencePage />} />
+              <Route path="/investigations/:id/analysis" element={<AnalysisPage />} />
+              <Route path="/investigations/:id/validation" element={<ValidationPage />} />
+              <Route path="/validation" element={<ValidationPage />} />
+              <Route path="/history" element={<HistoryPage />} />
+              <Route path="/settings" element={<SettingsPage />} />
+            </Route>
 
-          <Route path="*" element={<NotFoundPage />} />
-        </Routes>
-      </AuthProvider>
+            <Route path="*" element={<NotFoundPage />} />
+          </Routes>
+        </AuthProvider>
+      </I18nProvider>
     </PlatformProviders>
   )
 }

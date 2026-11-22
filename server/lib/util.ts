@@ -39,6 +39,45 @@ export function extractDomain(url: string): string {
   }
 }
 
+/** Query parameters that identify a campaign, not a different resource. */
+const TRACKING_PARAMS = [
+  'utm_source',
+  'utm_medium',
+  'utm_campaign',
+  'utm_term',
+  'utm_content',
+  'gclid',
+  'fbclid',
+  'ref',
+]
+
+/**
+ * URL normalisation used for duplicate detection.
+ *
+ * Lives here, next to `extractDomain`, because it is a pure string transform
+ * with no storage dependency. It used to live in `repositories/sqlite.ts`,
+ * whose module-level `node:sqlite` import then dragged the whole SQLite
+ * adapter into the Worker bundle: `research.ts`, `evidence.ts` and the records
+ * adapter all need this function, and every one of them runs in production.
+ * A pure helper must not be able to pull a Node-only runtime into the edge
+ * build, so the dependency points away from the adapter, never toward it.
+ *
+ * The normalisation drops the fragment and campaign parameters, lowercases the
+ * host and strips a trailing slash. Two URLs that differ only in those respects
+ * address the same content and must collide on `uniqueOn`.
+ */
+export function normalizeUrl(raw: string): string {
+  try {
+    const url = new URL(raw)
+    url.hash = ''
+    for (const param of TRACKING_PARAMS) url.searchParams.delete(param)
+    const path = url.pathname.replace(/\/+$/, '') || '/'
+    return `${url.protocol}//${url.host.toLowerCase()}${path}${url.search}`
+  } catch {
+    return raw.trim().toLowerCase()
+  }
+}
+
 /** Collapse whitespace and cut on a word boundary where possible. */
 export function excerpt(text: string, maxLength: number): string {
   const normalized = text.replace(/\s+/g, ' ').trim()

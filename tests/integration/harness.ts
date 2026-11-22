@@ -274,9 +274,15 @@ export async function startHarness(overrides: Record<string, string> = {}): Prom
           resolve()
         }
       })
+      // The mock has a deliberately non-responding mode (`exaMode: 'timeout'`),
+      // which leaves a socket open forever. `server.close()` waits for open
+      // connections, so without destroying them the teardown never settles and
+      // the next suite inherits a half-closed server — which surfaces far away
+      // as a stray ECONNRESET. Closing connections is the fix, not a retry.
       await new Promise<void>((resolve) => {
         try {
           provider.close(() => resolve())
+          provider.closeAllConnections?.()
         } catch {
           resolve()
         }
@@ -323,6 +329,15 @@ export function createClient(base: string): Client {
       headers.origin = options.origin ?? base
       if (client.cookie) headers.cookie = client.cookie
       if (body !== undefined) headers['content-type'] = 'application/json'
+      // Ask the server not to keep the connection open.
+      //
+      // The suites share one process and each boots its own server on an
+      // ephemeral port. Node's global `fetch` pools connections by origin, so a
+      // socket from a server that has since been torn down can be reused by a
+      // later request and fail with ECONNRESET — far from the suite that caused
+      // it, and only under load. `Connection: close` keeps every request on its
+      // own socket, removing the shared state behind that intermittent failure.
+      headers.connection = 'close'
 
       const response = await fetch(`${base}${path}`, {
         method,

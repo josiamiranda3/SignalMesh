@@ -138,6 +138,12 @@ export function loadConfig(env: EnvBag = {}, options: LoadConfigOptions = {}): A
   // The platform supplies its own origin through APP_ORIGIN when configured;
   // otherwise the app is same-origin and the CSRF check accepts the request's
   // own origin (see csrfGuard).
+  //
+  // The loopback default is a *development* convenience and must never become a
+  // deployed app's idea of its own origin: `authorizedParties` is derived from
+  // this value, so a production build silently falling back to
+  // `http://127.0.0.1:8787` would bind JWT `azp` checks to an origin no browser
+  // can present. `assertProductionSafety` refuses that combination instead.
   const appOrigin = env['APP_ORIGIN']?.trim() || `http://127.0.0.1:${port}`
 
   // Auth and persistence are properties of the runtime, not of a variable the
@@ -193,8 +199,12 @@ export function loadConfig(env: EnvBag = {}, options: LoadConfigOptions = {}): A
  * The checks are about *exposure*, not about deployment: a Worker holding a
  * weak session secret is harmless only if the local adapter is unreachable, and
  * this function is what guarantees that the combination is never accepted.
+ *
+ * @param env The raw environment bag, when the caller has it. Used to tell an
+ *   explicit production declaration from the Worker runtime's default, which
+ *   `deepspace dev start` also runs under.
  */
-export function assertProductionSafety(config: AppConfig): void {
+export function assertProductionSafety(config: AppConfig, env: EnvBag = {}): void {
   const problems: string[] = []
 
   if (config.paidOperationsEnabled && !config.externalApisEnabled) {
@@ -211,7 +221,51 @@ export function assertProductionSafety(config: AppConfig): void {
     problems.push('NODE_ENV=production requires DeepSpace authentication, not the local adapter')
   }
 
+  // A deployed app must know its own public origin.
+  //
+  // `appOrigin` decides both the CSRF allow-list and `authorizedParties` (the
+  // `azp` prefixes a platform token may carry). Falling back to the loopback
+  // default in production would either reject every real token or — worse —
+  // widen the check to an origin that is meaningless on the platform. Refusing
+  // at startup makes a missing APP_ORIGIN a deployment error, not a runtime
+  // mystery.
+  //
+  // "Production" here means *declared*, because the Worker runtime defaults
+  // `nodeEnv` to `production` even under `deepspace dev start`, which serves on
+  // loopback and does not inject APP_ORIGIN. Checking `config.nodeEnv` alone
+  // would make local development impossible while catching nothing extra: a
+  // real deploy sets NODE_ENV=production explicitly, and that is what this
+  // rejects.
+  if (declaredProduction(env) && isLoopbackOrigin(config.appOrigin)) {
+    problems.push(
+      'APP_ORIGIN must be the app\'s public origin in production; ' +
+        `found the development default "${config.appOrigin}"`,
+    )
+  }
+
   if (problems.length > 0) {
     throw new Error(`Unsafe configuration:\n- ${problems.join('\n- ')}`)
+  }
+}
+
+/** True only when the environment explicitly names production. */
+function declaredProduction(env: EnvBag): boolean {
+  return (env['NODE_ENV'] ?? '').trim().toLowerCase() === 'production'
+}
+
+/** True for origins that only ever name the local machine. */
+function isLoopbackOrigin(origin: string): boolean {
+  try {
+    const { hostname } = new URL(origin)
+    return (
+      hostname === 'localhost' ||
+      hostname === '127.0.0.1' ||
+      hostname === '[::1]' ||
+      hostname === '::1' ||
+      hostname === '0.0.0.0'
+    )
+  } catch {
+    // An unparseable origin cannot be a public one.
+    return false
   }
 }

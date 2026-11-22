@@ -20,6 +20,7 @@ import type {
   EvidenceRepository,
   InvestigationQuery,
   InvestigationRepository,
+  QuotaReservationRepository,
   Repositories,
   ResearchQueryRepository,
   SettingsRepository,
@@ -27,7 +28,7 @@ import type {
   UserRepository,
   ValidationRepository,
 } from '../ports.ts'
-import { normalizeUrl } from '../sqlite.ts'
+import { normalizeUrl } from '../../lib/util.ts'
 import { RecordsError, type RecordRow, type RecordStore } from './transport.ts'
 
 /**
@@ -894,6 +895,91 @@ class RecordsUserRepository implements UserRepository {
 }
 
 /** Assemble the DeepSpace-backed repository set. */
+/**
+ * Reservation repository over DeepSpace Records.
+ *
+ * Atomicity comes from the collection's `uniqueOn: ['ownerId', 'operation']`,
+ * which the RecordRoom materialises as a `CREATE UNIQUE INDEX` in its SQLite
+ * database (see `quotaReservationsSchema`). The insert either succeeds or the
+ * DO answers with a duplicate error — there is no read-then-write window, and
+ * no transaction API is required.
+ *
+ * Expiry is handled by deleting a stale row and retrying the insert, so a
+ * crashed request cannot hold the slot forever.
+ */
+class RecordsQuotaReservationRepository implements QuotaReservationRepository {
+  constructor(private readonly store: RecordStore) {}
+
+  async acquire(input: {
+    ownerId: string
+    operation: string
+    token: string
+    expiresAt: number
+    createdAt: string
+  }): Promise<{ token: string; recordId: string } | null> {
+    const data = {
+      ownerId: input.ownerId,
+      operation: input.operation,
+      token: input.token,
+      expiresAt: input.expiresAt,
+      createdAt: input.createdAt,
+    }
+
+    try {
+      const recordId = await this.store.create(COLLECTIONS.quotaReservations, data)
+      return { token: input.token, recordId }
+    } catch (error) {
+      if (!(error instanceof RecordsError) || error.code !== 'duplicate') throw error
+    }
+
+    // Someone holds a live reservation. Reclaim it only if it has expired; the
+    // conditional delete keeps the decision at the storage layer.
+    const stale = await this.store.query(COLLECTIONS.quotaReservations, {
+      where: { ownerId: input.ownerId, operation: input.operation },
+      limit: 1,
+    })
+    const existing = stale.records[0]
+    if (!existing) {
+      // The holder released between the insert and the query; retry once.
+      return this.acquireOnce(data, input.token)
+    }
+
+    const expiresAt = Number(existing.data['expiresAt'] ?? 0)
+    if (Number.isFinite(expiresAt) && expiresAt > Date.now()) return null
+
+    await this.store.remove(COLLECTIONS.quotaReservations, existing.recordId).catch(() => undefined)
+    return this.acquireOnce(data, input.token)
+  }
+
+  private async acquireOnce(
+    data: Record<string, unknown>,
+    token: string,
+  ): Promise<{ token: string; recordId: string } | null> {
+    try {
+      const recordId = await this.store.create(COLLECTIONS.quotaReservations, data)
+      return { token, recordId }
+    } catch (error) {
+      if (error instanceof RecordsError && error.code === 'duplicate') return null
+      throw error
+    }
+  }
+
+  async release(input: { ownerId: string; operation: string; token: string }): Promise<boolean> {
+    const found = await this.store.query(COLLECTIONS.quotaReservations, {
+      where: { ownerId: input.ownerId, operation: input.operation, token: input.token },
+      limit: 1,
+    })
+    const row = found.records[0]
+    if (!row) return false
+    await this.store.remove(COLLECTIONS.quotaReservations, row.recordId)
+    return true
+  }
+
+  async purgeExpired(now: number): Promise<number> {
+    return this.store.deleteWhere(COLLECTIONS.quotaReservations, { expiresAt: now })
+  }
+}
+
 export function createRecordsRepositories(store: RecordStore): Repositories {
   const evidence = new RecordsEvidenceRepository(store)
   return {
@@ -906,5 +992,6 @@ export function createRecordsRepositories(store: RecordStore): Repositories {
     researchQueries: new RecordsResearchQueryRepository(store),
     settings: new RecordsSettingsRepository(store),
     users: new RecordsUserRepository(store),
+    reservations: new RecordsQuotaReservationRepository(store),
   }
 }

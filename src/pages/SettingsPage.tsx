@@ -1,10 +1,10 @@
-import { useState } from 'react'
 import {
   AlertTriangle,
   CheckCircle2,
   Circle,
   Gauge,
   KeyRound,
+  Languages,
   LogOut,
   ShieldCheck,
   Sparkles,
@@ -19,9 +19,10 @@ import {
   Button,
   Notice,
   Skeleton,
-  useToast,
 } from '@/components/ui'
 import { useAuth } from '@/app/AuthProvider'
+import { useI18n } from '@/i18n/I18nProvider'
+import { LanguageSelector } from '@/components/ui/LanguageSelector'
 import { formatDateTime, formatNumber, formatRelative, untilReset } from '@/lib/format'
 import { cn } from '@/lib/utils'
 
@@ -35,30 +36,12 @@ import { cn } from '@/lib/utils'
  * says so.
  */
 export default function SettingsPage() {
-  const toast = useToast()
   const { signOut } = useAuth()
+  const { t } = useI18n()
   const { data, error, loading, reload } = useAsync<SettingsResponse>(
     () => api.get<SettingsResponse>('/api/settings'),
     [],
   )
-  const [busy, setBusy] = useState<string | null>(null)
-
-  const adjustLimit = async (field: 'researchDailyLimit' | 'analysisDailyLimit', delta: number) => {
-    if (!data) return
-    const current = field === 'researchDailyLimit' ? data.limits.researchDailyLimit : data.limits.analysisDailyLimit
-    const next = Math.max(0, Math.min(100, current + delta))
-    if (next === current) return
-    setBusy(field)
-    try {
-      await api.patch('/api/settings/limits', { [field]: next })
-      toast.success('Preferência registrada', 'O limite efetivo continua subordinado à configuração do servidor.')
-      reload()
-    } catch (caught) {
-      toast.error('Não foi possível salvar', caught instanceof Error ? caught.message : undefined)
-    } finally {
-      setBusy(null)
-    }
-  }
 
   if (loading) {
     return (
@@ -76,17 +59,17 @@ export default function SettingsPage() {
   if (error || !data) {
     return (
       <PageContainer>
-        <PageHeader eyebrow="Sistema" title="Configurações" />
+        <PageHeader eyebrow={t('settings.eyebrow')} title={t('settings.title')} />
         <Notice
           tone="danger"
-          title="Não foi possível carregar as configurações"
+          title={t('settings.loadError')}
           action={
             <Button size="sm" onClick={reload}>
-              Tentar novamente
+              {t('common.retry')}
             </Button>
           }
         >
-          {error?.message ?? 'Erro inesperado'}
+          {error?.message ?? t('settings.loadErrorFallback')}
         </Notice>
       </PageContainer>
     )
@@ -95,101 +78,94 @@ export default function SettingsPage() {
   return (
     <PageContainer>
       <PageHeader
-        eyebrow="Sistema"
-        title="Configurações"
-        description="Estado dos provedores externos, limites de consumo e dados da sua conta neste ambiente."
+        eyebrow={t('settings.eyebrow')}
+        title={t('settings.title')}
+        description={t('settings.description')}
       />
 
-      <div className="mt-6 grid gap-5 lg:grid-cols-2">
+      <div className="mt-5 grid gap-4 lg:grid-cols-2">
         {/* Providers */}
         <section className="panel p-5" aria-labelledby="providers-heading">
           <SectionHeader
-            title="Provedores externos"
-            description="Chaves são lidas apenas pelo backend"
+            title={t('settings.providersTitle')}
+            description={t('settings.providersDescription')}
             actions={<KeyRound className="size-4 text-ink-faint" aria-hidden />}
           />
 
           <div className="mt-4 space-y-3">
             <ProviderRow
               name="Exa"
-              purpose="Pesquisa externa"
+              purpose={t('settings.providerResearchPurpose')}
               configured={data.providers.exa.configured}
               enabled={data.providers.exa.enabled}
-              detail={`Tipo de busca: ${data.providers.exa.searchType}`}
+              detail={t('settings.providerSearchType', { type: data.providers.exa.searchType })}
             />
             <ProviderRow
               name="Google Gemini"
-              purpose="Análise estruturada"
+              purpose={t('settings.providerAnalysisPurpose')}
               configured={data.providers.gemini.configured}
               enabled={data.providers.gemini.enabled}
-              detail={`Modelo: ${data.providers.gemini.model}`}
+              detail={t('settings.providerModel', { model: data.providers.gemini.model })}
             />
           </div>
 
           <div className="mt-4 space-y-2 border-t border-hairline pt-4">
             <FlagRow
-              label="Chamadas externas (ENABLE_EXTERNAL_APIS)"
+              label={t('settings.flagExternalApis')}
               enabled={data.providers.externalApisEnabled}
             />
             <FlagRow
-              label="Operações pagas (ENABLE_PAID_OPERATIONS)"
+              label={t('settings.flagPaidOperations')}
               enabled={data.providers.paidOperationsEnabled}
               invertTone
             />
           </div>
 
           <Notice tone="info" className="mt-4">
-            Para configurar as chaves, defina <code className="font-mono text-ink-muted">EXA_API_KEY</code> e{' '}
-            <code className="font-mono text-ink-muted">GEMINI_API_KEY</code> no ambiente do backend e reinicie o
-            servidor. Nenhuma credencial é enviada ao navegador nem armazenada no banco de dados.
+            {t('settings.providerKeysNote')}
           </Notice>
         </section>
 
         {/* Limits */}
         <section className="panel p-5" aria-labelledby="limits-heading">
           <SectionHeader
-            title="Limites de consumo"
-            description="Proteção de custo aplicada no servidor"
+            title={t('settings.limitsTitle')}
+            description={t('settings.limitsDescription')}
             actions={<Gauge className="size-4 text-ink-faint" aria-hidden />}
           />
 
           <div className="mt-4 space-y-4">
             <LimitRow
-              label="Pesquisas por usuário / dia"
-              value={data.limits.researchDailyLimit}
+              label={t('settings.limitResearchPerUser')}
+              limit={data.limits.researchDailyLimit}
               used={data.quota.research.used}
               resetsAt={data.quota.research.resetsAt}
-              busy={busy === 'researchDailyLimit'}
-              onAdjust={(delta) => void adjustLimit('researchDailyLimit', delta)}
             />
             <LimitRow
-              label="Análises por usuário / dia"
-              value={data.limits.analysisDailyLimit}
+              label={t('settings.limitAnalysisPerUser')}
+              limit={data.limits.analysisDailyLimit}
               used={data.quota.analysis.used}
               resetsAt={data.quota.analysis.resetsAt}
-              busy={busy === 'analysisDailyLimit'}
-              onAdjust={(delta) => void adjustLimit('analysisDailyLimit', delta)}
             />
           </div>
 
           <dl className="mt-5 space-y-2 border-t border-hairline pt-4">
             <div className="flex items-center justify-between text-[0.75rem]">
-              <dt className="text-ink-subtle">Limite global de pesquisas / dia</dt>
+              <dt className="text-ink-subtle">{t('settings.limitResearchGlobal')}</dt>
               <dd className="tnum text-ink-muted">{data.limits.researchGlobalDailyLimit}</dd>
             </div>
             <div className="flex items-center justify-between text-[0.75rem]">
-              <dt className="text-ink-subtle">Limite global de análises / dia</dt>
+              <dt className="text-ink-subtle">{t('settings.limitAnalysisGlobal')}</dt>
               <dd className="tnum text-ink-muted">{data.limits.analysisGlobalDailyLimit}</dd>
             </div>
             <div className="flex items-center justify-between text-[0.75rem]">
-              <dt className="text-ink-subtle">Uma operação simultânea por usuário</dt>
-              <dd className="text-positive">ativo</dd>
+              <dt className="text-ink-subtle">{t('settings.singleOperation')}</dt>
+              <dd className="text-positive">{t('settings.activeLabel')}</dd>
             </div>
           </dl>
 
           <p className="mt-4 text-[0.75rem] leading-relaxed text-ink-faint">
-            O contador reinicia à meia-noite UTC ({formatDateTime(data.quota.research.resetsAt)}). A preferência
-            ajustada aqui nunca ultrapassa o limite configurado no servidor e é aplicada no backend.
+            {t('settings.limitsNote', { date: formatDateTime(data.quota.research.resetsAt) })}
           </p>
         </section>
       </div>
@@ -197,8 +173,8 @@ export default function SettingsPage() {
       {/* Account */}
       <section className="panel mt-5 p-5" aria-labelledby="account-heading">
         <SectionHeader
-          title="Conta"
-          description="Identidade usada nas decisões de validação"
+          title={t('settings.accountTitle')}
+          description={t('settings.accountDescription')}
           actions={<ShieldCheck className="size-4 text-ink-faint" aria-hidden />}
         />
         <div className="mt-4 flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
@@ -213,9 +189,24 @@ export default function SettingsPage() {
             </div>
           </div>
           <Button variant="secondary" size="sm" onClick={() => void signOut()} iconLeft={<LogOut className="size-3.5" aria-hidden />}>
-            Encerrar sessão
+            {t('settings.signOut')}
           </Button>
         </div>
+      </section>
+
+      {/* Language */}
+      <section className="panel mt-5 p-5" aria-labelledby="language-heading">
+        <SectionHeader
+          title={t('common.language')}
+          description={t('common.languageDescription')}
+          actions={<Languages className="size-4 text-ink-faint" aria-hidden />}
+        />
+        <div className="mt-4">
+          <LanguageSelector />
+        </div>
+        <p className="mt-3 font-mono text-[0.6875rem] uppercase tracking-[0.1em] text-ink-faint">
+          {t('common.languageDescription')}
+        </p>
       </section>
 
       {/* Usage ledger */}
@@ -223,22 +214,22 @@ export default function SettingsPage() {
         <div className="flex items-center justify-between border-b border-hairline px-5 py-3.5">
           <div>
             <h2 id="usage-heading" className="text-[0.9375rem] font-semibold text-ink">
-              Registro de consumo
+              {t('settings.usageTitle')}
             </h2>
             <p className="mt-0.5 text-[0.75rem] text-ink-subtle">
-              Toda tentativa é registrada — incluindo bloqueios por limite.
+              {t('settings.usageDescription')}
             </p>
           </div>
           <Button variant="ghost" size="sm" onClick={reload}>
-            Atualizar
+            {t('common.refresh')}
           </Button>
         </div>
 
         {data.usageHistory.length === 0 ? (
           <div className="px-5 py-10 text-center">
-            <p className="text-[0.8125rem] text-ink-muted">Nenhuma operação externa registrada.</p>
+            <p className="text-[0.8125rem] text-ink-muted">{t('settings.usageEmpty')}</p>
             <p className="mx-auto mt-1 max-w-md text-[0.75rem] leading-relaxed text-ink-faint">
-              Pesquisas na Exa e análises no Gemini aparecem aqui com provedor, operação, resultado e data.
+              {t('settings.usageEmptyDescription')}
             </p>
           </div>
         ) : (
@@ -252,25 +243,22 @@ export default function SettingsPage() {
 
       {/* Privacy */}
       <section className="panel mt-5 p-5" aria-labelledby="privacy-heading">
-        <SectionHeader title="Privacidade e uso de dados" description="O que sai do SignalMesh e por quê" />
+        <SectionHeader title={t('settings.privacyTitle')} description={t('settings.privacyDescription')} />
         <div className="mt-4 grid gap-4 lg:grid-cols-2">
           <div>
             <p className="text-[0.8125rem] leading-relaxed text-ink-muted">
-              Ao executar uma pesquisa, a consulta derivada do tema e do objetivo é enviada à Exa. Ao solicitar uma
-              análise, o objetivo da investigação e o conteúdo das evidências armazenadas são enviados ao Google
-              Gemini. Esses dados são processados pelos respectivos provedores conforme as políticas deles.
+              {t('settings.privacyBody1')}
             </p>
             <p className="mt-3 text-[0.8125rem] leading-relaxed text-ink-muted">
-              Nenhuma credencial, token de sessão ou dado de outro usuário é incluído nessas chamadas. O SignalMesh
-              não usa IA gerenciada nem o proxy pago da plataforma de hospedagem para pesquisa ou análise.
+              {t('settings.privacyBody2')}
             </p>
           </div>
           <ul className="space-y-2">
             {[
-              'Conteúdo de fontes é tratado como dado não confiável, nunca como instrução.',
-              'Referências inexistentes invalidam a análise inteira.',
-              'Logs não registram credenciais nem corpos de requisição.',
-              'Exportações incluem apenas dados da sua conta.',
+              t('settings.privacyRuleUntrusted'),
+              t('settings.privacyRuleReferences'),
+              t('settings.privacyRuleLogs'),
+              t('settings.privacyRuleExports'),
             ].map((item) => (
               <li key={item} className="flex gap-2 text-[0.75rem] leading-relaxed text-ink-subtle">
                 <CheckCircle2 className="mt-0.5 size-3.5 shrink-0 text-positive" aria-hidden />
@@ -297,7 +285,12 @@ function ProviderRow({
   enabled: boolean
   detail: string
 }) {
-  const state = enabled ? 'operacional' : configured ? 'bloqueado por interruptor' : 'sem chave'
+  const { t } = useI18n()
+  const state = enabled
+    ? t('settings.providerStateOperational')
+    : configured
+      ? t('settings.providerStateBlocked')
+      : t('settings.providerStateNoKey')
   return (
     <div className="flex items-center justify-between gap-3 rounded-md border border-hairline bg-raised/30 px-3 py-2.5">
       <div className="min-w-0">
@@ -326,44 +319,48 @@ function FlagRow({ label, enabled, invertTone = false }: { label: string; enable
   )
 }
 
+/**
+ * One per-user daily limit.
+ *
+ * The value is read-only on purpose. The limit is a server-side cost control
+ * (`RESEARCH_DAILY_LIMIT` / `ANALYSIS_DAILY_LIMIT` in the environment), and the
+ * enforcement in `UsageService` reads that configuration directly — nothing ever
+ * reads the per-user preference the old +/- controls wrote, so moving them
+ * changed nothing but the counter on screen. Showing the effective number and
+ * the real consumption is honest; offering a control that cannot change the
+ * outcome is not.
+ */
 function LimitRow({
   label,
-  value,
+  limit,
   used,
   resetsAt,
-  busy,
-  onAdjust,
 }: {
   label: string
-  value: number
+  limit: number
   used: number
   resetsAt: string
-  busy: boolean
-  onAdjust: (delta: number) => void
 }) {
-  const exhausted = used >= value
+  const { t } = useI18n()
+  const exhausted = used >= limit
   return (
     <div>
-      <div className="flex items-center justify-between gap-3">
+      <div className="flex items-baseline justify-between gap-3">
         <p className="text-[0.75rem] text-ink-muted">{label}</p>
-        <div className="flex items-center gap-1">
-          <Button variant="quiet" size="sm" onClick={() => onAdjust(-1)} disabled={busy || value <= 0} aria-label={`Diminuir ${label}`}>
-            −
-          </Button>
-          <span className="tnum w-8 text-center text-[0.875rem] font-semibold text-ink">{value}</span>
-          <Button variant="quiet" size="sm" onClick={() => onAdjust(1)} disabled={busy || value >= 100} aria-label={`Aumentar ${label}`}>
-            +
-          </Button>
-        </div>
+        {/* Static readout: the effective server limit. */}
+        <p className="flex items-baseline gap-1.5">
+          <span className="figure text-[0.9375rem] text-ink">{limit}</span>
+          <span className="text-[0.6875rem] text-ink-faint">{t('settings.perDay')}</span>
+        </p>
       </div>
-      <div className="mt-1.5 h-1.5 w-full overflow-hidden rounded-full bg-[#161c29]">
+      <div className="mt-1.5 h-1.5 w-full overflow-hidden rounded-full bg-[#1a222c]">
         <div
           className={cn('h-full rounded-full', exhausted ? 'bg-negative' : 'bg-signal')}
-          style={{ width: `${value > 0 ? Math.min(100, (used / value) * 100) : 100}%` }}
+          style={{ width: `${limit > 0 ? Math.min(100, (used / limit) * 100) : 100}%` }}
         />
       </div>
       <p className={cn('mt-1 text-[0.75rem]', exhausted ? 'text-negative' : 'text-ink-faint')}>
-        {used} de {value} usada(s) hoje · reinicia {untilReset(resetsAt)}
+        {t('settings.limitUsage', { used, limit, when: untilReset(resetsAt) })}
       </p>
     </div>
   )
@@ -371,7 +368,13 @@ function LimitRow({
 
 function UsageRow({ record }: { record: UsageRecord }) {
   const statusTone = record.status === 'success' ? 'positive' : record.status === 'blocked' ? 'caution' : 'negative'
-  const statusLabel = record.status === 'success' ? 'sucesso' : record.status === 'blocked' ? 'bloqueado' : 'erro'
+  const { t } = useI18n()
+  const statusLabel =
+    record.status === 'success'
+      ? t('settings.statusSuccess')
+      : record.status === 'blocked'
+        ? t('settings.statusBlocked')
+        : t('settings.statusError')
 
   return (
     <li className="flex flex-col gap-2 px-5 py-3 sm:flex-row sm:items-center sm:justify-between">
@@ -386,7 +389,9 @@ function UsageRow({ record }: { record: UsageRecord }) {
         <div className="min-w-0">
           <p className="text-[0.8125rem] text-ink-muted">
             {record.provider === 'exa' ? 'Exa' : 'Gemini'} ·{' '}
-            {record.operation === 'research' ? 'pesquisa' : 'análise'}
+            {record.operation === 'research'
+              ? t('settings.operationResearch')
+              : t('settings.operationAnalysis')}
           </p>
           <p className="text-[0.75rem] text-ink-faint">
             {formatDateTime(record.createdAt)} · {formatRelative(record.createdAt)}
@@ -395,7 +400,9 @@ function UsageRow({ record }: { record: UsageRecord }) {
         </div>
       </div>
       <div className="flex items-center gap-2 pl-10 sm:pl-0">
-        <span className="tnum text-[0.75rem] text-ink-faint">qtd {record.quantity}</span>
+        <span className="tnum text-[0.75rem] text-ink-faint">
+          {t('settings.quantity', { count: record.quantity })}
+        </span>
         <Badge tone={statusTone} dot>
           {statusLabel}
         </Badge>

@@ -228,12 +228,53 @@ describe('browser cannot reach the record room directly', () => {
     }
   })
 
-  it('does not serve the internal tools path', async () => {
+  it('does not serve the former phantom migration endpoint', async () => {
+    // The v0.2 CLI targeted `/api/internal/records/tools`, which was never
+    // implemented. It must stay absent: the administrative path is the
+    // owner-gated server action, not an internal tools proxy.
     const response = await fetch(`${base}/api/internal/records/tools`, {
       method: 'POST',
       headers: { 'content-type': 'application/json', 'x-signalmess-request': '1' },
       body: '{}',
     })
     assert.ok(response.status === 404 || response.status === 401)
+  })
+
+  it('exposes the action route but only behind authentication', async () => {
+    const anonymous = await fetch(`${base}/api/actions/migrateRecords`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json', 'x-signalmess-request': '1' },
+      body: JSON.stringify({ ownerId: 'user_x', rows: [], dryRun: true }),
+    })
+    assert.equal(anonymous.status, 401, 'a ação administrativa não pode ser anônima')
+  })
+
+  it('ignores forged migration headers without granting identity', async () => {
+    const response = await fetch(`${base}/api/actions/migrateRecords`, {
+      method: 'POST',
+      headers: {
+        'content-type': 'application/json',
+        'x-signalmess-request': '1',
+        'x-migration-owner': 'user_owner',
+        'x-migration-app': 'app_forged',
+        'x-user-id': 'user_owner',
+      },
+      body: JSON.stringify({ ownerId: 'user_owner', rows: [], dryRun: true }),
+    })
+    assert.equal(response.status, 401, 'headers do cliente não são prova de identidade')
+  })
+
+  it('does not let the browser reach the action without an owner identity', async () => {
+    // Authenticated as a normal member of the local adapter: still refused,
+    // because the action is owner-gated.
+    const response = await authenticated.request('POST', '/api/actions/migrateRecords', {
+      ownerId: 'auditoria@example.com',
+      rows: [],
+      dryRun: true,
+    })
+    assert.ok(
+      response.status === 401 || response.status === 403 || response.status === 404,
+      `membro não pode executar a ação administrativa (respondeu ${response.status})`,
+    )
   })
 })

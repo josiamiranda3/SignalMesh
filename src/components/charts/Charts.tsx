@@ -1,4 +1,5 @@
 import { cn } from '@/lib/utils'
+import { useI18n } from '@/i18n/I18nProvider'
 
 /** Signature chart: an area sparkline for a 30-day series. */
 export function Sparkline({
@@ -12,7 +13,7 @@ export function Sparkline({
   height?: number
   className?: string
   ariaLabel: string
-  tone?: 'signal' | 'cyan'
+  tone?: 'signal' | 'neutral'
 }) {
   const width = 320
   const max = Math.max(1, ...data.map((point) => point.count))
@@ -25,7 +26,8 @@ export function Sparkline({
 
   const line = points.map((point, index) => `${index === 0 ? 'M' : 'L'}${point.x.toFixed(2)},${point.y.toFixed(2)}`).join(' ')
   const area = `${line} L${width},${height} L0,${height} Z`
-  const stroke = tone === 'cyan' ? '#43d9d0' : '#5b8cff'
+  // Signal Red draws the live series; the neutral silver draws context series.
+  const stroke = tone === 'neutral' ? '#AAB4C2' : '#B64B50'
   const gradientId = `spark-${tone}-${data.length}-${max}`
 
   return (
@@ -69,7 +71,7 @@ export function BarDistribution({
             <span className="text-[0.75rem] text-ink-muted">{row.label}</span>
             <span className="tnum text-[0.75rem] font-medium text-ink">{row.value}</span>
           </div>
-          <div className="h-1.5 w-full overflow-hidden rounded-full bg-[#161c29]">
+          <div className="h-1.5 w-full overflow-hidden rounded-full bg-[#1a222c]">
             <div
               className={cn('h-full rounded-full transition-[width] duration-500', row.tone)}
               style={{ width: `${(row.value / max) * 100}%` }}
@@ -86,28 +88,31 @@ export function BarDistribution({
  * prioritisation aid, not a truth score.
  */
 export function ScoreDial({ score, size = 44 }: { score: number | null; size?: number }) {
+  const { t } = useI18n()
   if (score === null) {
     return (
       <div
         className="flex items-center justify-center rounded-full border border-hairline-strong text-[0.75rem] text-ink-faint"
         style={{ width: size, height: size }}
-        title="Sem dados suficientes para calcular prioridade"
+        title={t('common.noPriorityData')}
       >
         n/d
       </div>
     )
   }
   const percent = Math.round(score * 100)
-  const color = percent >= 70 ? '#34d399' : percent >= 45 ? '#5b8cff' : '#f5b544'
+  // Same three tiers as before, repainted to the SignalMesh palette so the dial
+  // agrees with the badges and the bars.
+  const color = percent >= 70 ? '#3DD68C' : percent >= 45 ? '#B64B50' : '#E5B454'
   return (
     <div
       className="relative flex items-center justify-center rounded-full"
       style={{
         width: size,
         height: size,
-        background: `conic-gradient(${color} ${percent * 3.6}deg, #1b2231 0deg)`,
+        background: `conic-gradient(${color} ${percent * 3.6}deg, #1a222c 0deg)`,
       }}
-      title={`Índice de priorização: ${percent}/100`}
+      title={t('common.priorityIndex', { percent })}
     >
       <div className="flex items-center justify-center rounded-full bg-surface" style={{ width: size - 7, height: size - 7 }}>
         <span className="tnum text-[0.75rem] font-semibold text-ink">{percent}</span>

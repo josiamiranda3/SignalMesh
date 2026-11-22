@@ -1,5 +1,5 @@
 import { DatabaseSync } from 'node:sqlite'
-import { mkdirSync } from 'node:fs'
+import { existsSync, mkdirSync, statSync } from 'node:fs'
 import { dirname, resolve } from 'node:path'
 
 /**
@@ -155,6 +155,23 @@ CREATE TABLE IF NOT EXISTS app_settings (
   key    TEXT PRIMARY KEY,
   value  TEXT NOT NULL
 );
+
+-- In-flight paid-operation reservations.
+--
+-- The UNIQUE index is the guard, not a read-then-write check: two concurrent
+-- INSERTs for the same (owner_id, operation) cannot both succeed, which is the
+-- same enforcement the RecordRoom applies through its uniqueOn setting.
+-- expires_at bounds a reservation so a crashed request cannot lock a user out.
+CREATE TABLE IF NOT EXISTS quota_reservations (
+  id          TEXT PRIMARY KEY,
+  owner_id    TEXT NOT NULL,
+  operation   TEXT NOT NULL,
+  token       TEXT NOT NULL,
+  expires_at  INTEGER NOT NULL,
+  created_at  TEXT NOT NULL
+);
+CREATE UNIQUE INDEX IF NOT EXISTS uniq_quota_reservation
+  ON quota_reservations (owner_id, operation);
 `
 
 export function openDatabase(path: string): Database {
@@ -168,6 +185,82 @@ export function openDatabase(path: string): Database {
     raw,
     close: () => raw.close(),
   }
+}
+
+/**
+ * Open an existing database **without the ability to write to it**.
+ *
+ * ## Why not just `openDatabase`
+ *
+ * `openDatabase` is the application's boot path: it creates the directory,
+ * applies the schema and sets WAL. That is correct for a server that owns the
+ * file and wrong for a migration that merely reads it — a reader that can create
+ * tables, change journaling, or leave `-wal`/`-shm` files behind is a reader that
+ * can modify an artifact the operator believed was being preserved.
+ *
+ * ## The two modes, and why the sidecar check exists
+ *
+ * SQLite offers two read-only shapes and they are not equivalent:
+ *
+ *  - **`readOnly: true` on a plain path** — correct, but any read of a WAL
+ *    database creates `-shm`/`-wal` files, i.e. it writes to the directory.
+ *  - **`immutable=1` URI** — creates nothing at all, but asserts that the file
+ *    cannot change and that no WAL needs replaying. Using it on a database with
+ *    a non-empty `-wal` would silently ignore committed transactions.
+ *
+ * So `immutable` is used only when there is no `-wal` to replay. A database with
+ * pending WAL content falls back to `readOnly`, which reads the WAL correctly
+ * and may create the sidecars — the lesser evil, and still incapable of
+ * modifying the main file or the rows in it.
+ *
+ * ## Failure behavior
+ *
+ * A missing file is an error, never a new empty database: the previous behavior
+ * (create on open) risked a migration "succeeding" against a database it had just
+ * created. Nothing here writes; if the file cannot be read, the caller aborts
+ * before any row is collected.
+ */
+export function openReadOnlyDatabase(path: string): Database & { readonly mode: ReadOnlyMode } {
+  if (path === ':memory:') {
+    throw new Error(
+      'A migração precisa de um arquivo SQLite existente; :memory: não contém dados de origem.',
+    )
+  }
+
+  const absolute = resolve(path)
+  if (!existsSync(absolute)) {
+    throw new Error(`Banco de origem não encontrado: ${absolute}`)
+  }
+
+  const hasWal = existsSync(`${absolute}-wal`) && statSync(`${absolute}-wal`).size > 0
+  const mode: ReadOnlyMode = hasWal ? 'readonly-wal' : 'immutable'
+
+  const target = mode === 'immutable' ? `file:${toFileUriPath(absolute)}?immutable=1` : absolute
+  const raw = new DatabaseSync(target, { readOnly: true })
+
+  return {
+    raw,
+    mode,
+    close: () => raw.close(),
+  }
+}
+
+/** How the source was opened, so the CLI can report it honestly. */
+export type ReadOnlyMode = 'immutable' | 'readonly-wal'
+
+/**
+ * Escape a Windows path for a `file:` URI.
+ *
+ * A drive-letter path is not a valid URI path (`C:\x` must become `/C:/x`), and
+ * `#` or `?` in a directory name would otherwise be parsed as URI syntax.
+ */
+function toFileUriPath(absolute: string): string {
+  const slashed = absolute.replace(/\\/g, '/')
+  const withRoot = /^[a-zA-Z]:/.test(slashed) ? `/${slashed}` : slashed
+  return withRoot
+    .split('/')
+    .map((segment, index) => (index === 0 ? segment : encodeURIComponent(segment)))
+    .join('/')
 }
 
 /** Read/write helpers that keep every query parameterised. */

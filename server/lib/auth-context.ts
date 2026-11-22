@@ -20,6 +20,20 @@ import type { UserRecord } from '../types.ts'
 
 export type AuthMode = 'deepspace' | 'local'
 
+/**
+ * The platform's session cookie names, in the order they are accepted.
+ *
+ * Declared here because two layers need them: the auth resolver (to read the
+ * identity) and the CSRF policy (to decide whether a request is browser-carried).
+ * A cookie-authenticated request is exactly the class of request a cross-site
+ * attacker can cause, so the CSRF policy must be able to recognise it without
+ * importing the resolver, and the two must not drift.
+ */
+export const PLATFORM_SESSION_COOKIES = [
+  '__Secure-better-auth.session_token',
+  'better-auth.session_token',
+] as const
+
 export interface AuthContext {
   mode: AuthMode
   user: UserRecord

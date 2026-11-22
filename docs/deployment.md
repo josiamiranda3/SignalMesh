@@ -63,6 +63,53 @@ Verificação: o bundle do Worker contém `api.exa.ai` e
 `generativelanguage.googleapis.com` como URLs de fetch, e não contém chamadas ao proxy de
 integrações.
 
+### 2.6 A contradição de autorização da v0.2.2 (corrigida na v0.2.3)
+
+A versão 0.2.2 continha duas regras incompatíveis entre si:
+
+| Regra | Onde estava | Efeito |
+| --- | --- | --- |
+| Toda ação exige `userId === OWNER_USER_ID` | `ownerOnly` em `server/actions/index.ts` | Só o dono do app podia executar. |
+| A migração exige `ownerId === userId` | `migrateRecords` | Só se migrava o dado do próprio chamador. |
+
+Juntas, elas significavam que **apenas o dono do app podia migrar, e apenas os dados do
+próprio dono do app**. O dado de qualquer outra conta era inalcançável por qualquer pessoa.
+Isso não é uma propriedade de segurança — é uma impossibilidade, num sistema explicitamente
+multi-tenant.
+
+**O que a plataforma realmente exige.** Nada disso. Lendo os tipos instalados
+(`deepspace@0.44.2`) e o scaffold oficial:
+
+- O SDK **não monta** a rota de ações. Ela é implementada pelo app — o scaffold
+  `create-deepspace` registra `app.post('/api/actions/:name')` à mão, exatamente como este
+  repositório.
+- O SDK declara que *"this worker is the only authorization boundary"*: `resolveAuth`
+  estabelece quem chama, e o resto roda com essa identidade e nenhuma checagem adicional.
+- `OWNER_USER_ID` serve para duas coisas: tornar o dono do app administrador do RecordRoom
+  (`new RecordRoom(state, env, schemas, { ownerUserId })`) e, no scaffold, escolher
+  `APP_OWNER_JWT` para integrações cobradas do desenvolvedor. **Nenhuma delas é condição
+  para despachar uma ação.**
+
+**A correção.** `migrateRecords` passou a usar `selfScoped`, e `ownerOnly` permanece
+disponível para operações genuinamente globais (sem escopo por linha). Ver §5.5.
+
+### 2.7 Camadas de responsabilidade (o que é nosso e o que é da plataforma)
+
+Distinção que a v0.2.2 embaralhava em comentários:
+
+| Camada | Responsável | Onde |
+| --- | --- | --- |
+| Rota HTTP `POST /api/actions/:name` | **SIGNALMESH** | `server/http/action-routes.ts`, montada por `worker.ts` |
+| Verificação do JWT | **SIGNALMESH**, usando `verifyJwt` do SDK | `resolveIdentity` em `worker.ts` |
+| Política de autorização por ação | **SIGNALMESH** | `server/actions/index.ts` |
+| Contrato de handler e tipos | SDK | `deepspace/worker` (`ActionHandler`, `ActionContext`) |
+| Transporte até o RecordRoom (RBAC off) | SDK | `X-App-Action`, via `createActionTools` |
+| RBAC por linha, `userBound`, `immutable` | SDK (Durable Object) | `src/schemas.ts` declara; o DO aplica |
+
+A consequência prática: como o transporte desliga o RBAC por linha, **a checagem de posse é
+responsabilidade do handler**. O SDK diz isso explicitamente e adverte que uma ação que
+repassa um id vindo de `params` "não autorizou nada".
+
 ---
 
 ## 4. Limites que **não** foram verificados
@@ -134,7 +181,7 @@ Nenhum destes foi executado. Cada um precisa de autorização explícita.
 | `npx deepspace app init` | **registra o app e minta o `DEEPSPACE_APP_ID`**; grava em `wrangler.toml` | **não** (id é permanente) |
 | `npx deepspace secrets set EXA_API_KEY=…` | grava segredo no store; primeira escrita também **registra o app** | sim (delete) |
 | `npx deepspace deploy` | **trava a origem do código**; publica em `<nome>.app.space` | parcial (undeploy tira do ar; origem permanece) |
-| `npm run migrate:records` | copia dados locais para o app implantado | sim (não apaga origem) |
+| `npm run migrate:records` | copia dados locais para o app implantado (uma conta por execução) | sim (não apaga origem) |
 
 ### 5.4 Trabalho técnico restante após autorização
 
@@ -144,10 +191,132 @@ Nenhum destes foi executado. Cada um precisa de autorização explícita.
 | Definir secrets | baixo | `secrets set`, depois deploy |
 | Verificar em workerd | baixo | `npm run test:worker` em ambiente que permita o runtime |
 | Verificar o RecordRoom real | médio | o fake não é o binário do SDK; validar RBAC e `uniqueOn` reais |
-| Executar a migração de dados | baixo | `migrate:records --dry-run` primeiro |
+| Executar a migração de dados | baixo | `migrate:records --dry-run` primeiro (ver §5.5) |
 | Ajustar limites diários ao público | baixo | `wrangler.toml` |
 
 Nenhum desses itens é uma reescrita: a arquitetura já está no formato da plataforma.
+
+### 5.5 Migração SQLite → Records (v0.2.2)
+
+O procedimento mudou em relação à v0.2.1: o CLI não abre mais a origem para escrita e
+passou a enviar o cabeçalho anti-CSRF. Esta seção é o manual operacional.
+
+**Estado.** Nada aqui foi executado. Não existe app registrado, nem destino, nem token de
+proprietário — logo a migração real continua **bloqueada** por falta de credencial, que é o
+desenho.
+
+#### Pré-requisitos
+
+1. App **registrado** (`DEEPSPACE_APP_ID` diferente de `__APP_ID__`) e **implantado** — a
+   ação só existe no runtime Worker.
+2. Token de sessão **do proprietário dos dados**, obtido fora de banda. O chamador precisa
+   ser o dono das linhas, **não** o proprietário do app: a autorização é individual.
+3. Banco SQLite de origem existente em `DATABASE_URL` (ou `.data/signalmess.sqlite`).
+
+`OWNER_USER_ID` **não** é pré-requisito da migração. Ele é usado pela plataforma para tornar
+o dono do app administrador do RecordRoom e, no scaffold, para escolher o JWT de cobrança de
+integrações — não é uma condição para despachar uma ação. Na v0.2.2 a migração estava
+indevidamente presa a ele (§2.6); desde a v0.2.3 não está.
+
+#### Modelo de autorização
+
+A migração é uma operação **multi-tenant**, e a autorização reflete isso:
+
+| Quem | Pode migrar | Por quê |
+| --- | --- | --- |
+| Dono dos dados (qualquer conta) | **os próprios dados** | `selfScoped`: o `ownerId` declarado precisa ser igual ao sujeito verificado do JWT. |
+| Dono dos dados | dados de outra conta | **não** — recusado com 403 antes de qualquer escrita. |
+| Dono do app (`OWNER_USER_ID`) | dados de outra conta | **não**. Ser dono do app não é uma chave-mestra sobre dados de usuários. |
+| Anônimo | nada | **não** — 401 antes do despacho. |
+
+Três camadas independentes sustentam o isolamento:
+
+1. **JWT verificado** — a identidade vem de `verifyJwt` com a chave e o emissor injetados
+   pela plataforma. Nenhum header do cliente é consultado como prova.
+2. **`selfScoped` no registro** — recusa antes de executar o handler quando o `ownerId`
+   declarado não é o do chamador.
+3. **`userBound` + `immutable` no schema** — o Durable Object carimba o id do chamador em
+   toda escrita e recusa alteração de posse, mesmo que o handler tentasse.
+
+Além disso, o handler relê cada linha antes de escrever e recusa tocar em registro cujo dono
+seja outro. Uma execução por conta, com o token daquela conta, é o procedimento correto.
+
+#### Parâmetros
+
+| Parâmetro | Obrigatório | Efeito |
+| --- | --- | --- |
+| `--owner <userId>` | sim | Dono cujas linhas serão lidas e importadas. Precisa ser **igual** ao sujeito verificado do token. |
+| `--token-stdin` | sim (ou `MIGRATION_TOKEN`) | Lê o token da entrada padrão, para não deixá-lo no histórico do shell nem na lista de processos. |
+| `--target-url <url>` | sim (ou `MIGRATION_TARGET_URL`) | Base do app implantado. O CLI acrescenta `/api/actions/migrateRecords`. |
+| `--dry-run` | não | Simula. **Nenhuma escrita** é enviada. |
+| `--from <índice>` | não | Retoma a partir do índice indicado (ver "Recuperação"). |
+| `--timeout-ms <n>` | não | Teto por chamada HTTP. Padrão 60000. |
+| `--retries <n>` | não | Repetições para falhas de transporte. Padrão 2. |
+
+#### Variáveis de ambiente
+
+| Variável | Uso |
+| --- | --- |
+| `MIGRATION_TARGET_URL` | Alternativa a `--target-url`. |
+| `MIGRATION_TOKEN` | Alternativa a `--token-stdin`. Preferir o stdin. |
+| `DATABASE_URL` | Caminho do SQLite de origem. Só leitura. |
+
+#### Endpoint utilizado
+
+`POST <target>/api/actions/migrateRecords`, com `Authorization: Bearer <token>` e
+`x-signalmess-request: 1`.
+
+**O cabeçalho anti-CSRF não é autenticação.** Ele é um sinalizador de mesma origem que
+qualquer página do app envia; a credencial é o token, que o servidor **verifica**
+criptograficamente antes de qualquer despacho. Enviá-lo não concede identidade: um
+requisição anônima com o cabeçalho continua recebendo 401 da rota de ação.
+
+O servidor hoje **dispensa** esse cabeçalho para clientes bearer cujo token verificou e que
+não carregam cookie de sessão (`server/lib/csrf-policy.ts`). O CLI o envia mesmo assim
+porque é o caminho que funciona em qualquer topologia, inclusive atrás de um proxy que
+remove o `Origin`.
+
+#### Dry-run versus migração efetiva
+
+| Aspecto | `--dry-run` | Migração efetiva |
+| --- | --- | --- |
+| Lê a origem | sim | sim |
+| Chama a ação | sim | sim |
+| Grava no destino | **não** | sim |
+| `update` / `create` | nunca executados | por linha, conforme o caso |
+| O que retorna | `created`/`updated`/`unchanged` **previstos** | o resultado real de cada linha |
+| Contagem `created` | previsão | gravações confirmadas |
+
+O dry-run classifica usando a mesma leitura que a migração real faria, então ele é um ensaio
+fiel — mas "previsto" não é "gravado": a única prova de escrita é a execução real.
+
+#### Limitações do runtime Node
+
+No runtime Node (local, testes) a rota `/api/actions/migrateRecords` **existe e autentica**,
+mas as ferramentas de dados não: `server/app.ts` injeta uma implementação que apenas lança
+*"requer o runtime DeepSpace (RecordRoom)"*. Consequências:
+
+- é possível testar CSRF, autenticação e autorização localmente;
+- **não** é possível migrar dados localmente — a migração precisa do Worker implantado;
+- o CLI falha de forma explícita nesse caso, sem gravar nada.
+
+#### Recuperação após falha parcial
+
+A migração envia lotes de até 100 linhas. Uma interrupção no lote *N* deixa os lotes
+`0..N-1` aplicados. Como cada escrita é idempotente, **a recuperação é reenviar**:
+
+1. O CLI imprime quantas linhas já foram processadas e o comando de retomada.
+2. Reexecute com `--from <linhas já processadas>` para não reenviar o que já está feito.
+3. Ou reexecute **sem** `--from`: o que já foi aplicado volta como `unchanged` e nada é
+   reescrito. É mais lento, não é incorreto.
+
+Nunca é necessário limpar o destino. A origem **não é alterada** em nenhum cenário: o
+coletor abre o SQLite em modo somente leitura e nunca emite `INSERT`, `UPDATE` ou `DELETE`.
+
+**Ordem de dependência.** As linhas são coletadas na ordem `investigations → evidence →
+analyses → validations → activity_logs → usage_records`. Um lote interrompido no meio deixa
+filhos órfãos até a retomada — visível como contagem incompleta, nunca como corrupção;
+reexecutar completa as relações porque os ids são preservados.
 
 ---
 
@@ -220,10 +389,15 @@ proprietário.
 - [x] Adaptador SQLite tree-shaken do bundle
 - [x] Nenhum segredo embutido no bundle
 - [x] Interruptores de custo lidos em runtime, default `false`
-- [x] 224 testes automatizados passam
-- [x] 56 + 22 verificações em navegador real passam
-- [x] Auditoria de design sem problemas
-- [x] Migração de dados idempotente e testada
+- [x] 416 testes automatizados passam no runtime Node
+- [ ] 56 + 22 verificações em navegador real — **não executadas nesta versão** (o
+      navegador não inicia neste ambiente; ver `docs/testing.md` §9)
+- [ ] Auditoria de design — não executada nesta versão, pelo mesmo motivo
+- [x] Migração idempotente e testada **contra o duplo de contrato**, não contra o DO real
+- [x] Autorização de migração individual (`selfScoped`), sem depender de `OWNER_USER_ID`
+- [x] Isolamento entre duas contas provado com identidades distintas (A e B)
+- [x] Coletor da migração abre a origem em modo somente leitura
+- [x] CLI envia o cabeçalho anti-CSRF e não o usa como identidade
 - [x] `.gitignore` cobre `.env`, `.dev.vars`, `.wrangler*`, banco local
 
 ### Pendente de ação do proprietário
@@ -243,7 +417,7 @@ proprietário.
 - [ ] `npm run test:worker` em ambiente que permita workerd
 - [ ] Validar o RecordRoom real (RBAC, `uniqueOn`, paginação)
 - [ ] Medir subrequests por requisição no app implantado
-- [ ] `migrate:records --dry-run` e depois a migração real
+- [ ] `migrate:records --dry-run` e depois a migração real (procedimento em §5.5)
 
 ---
 

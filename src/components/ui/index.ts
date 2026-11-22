@@ -16,3 +16,10 @@ export { ToastProvider, useToast } from './Toast'
 export { Tooltip } from './Tooltip'
 export { Tabs } from './Tabs'
 export { Progress, Meter } from './Progress'
+export {
+  KeywordEditor,
+  splitKeywords,
+  dedupeKeywords,
+  MAX_KEYWORDS,
+  MAX_KEYWORD_LENGTH,
+} from './KeywordEditor'

@@ -8,6 +8,7 @@ import {
   Sparkles,
 } from 'lucide-react'
 import type { LucideIcon } from 'lucide-react'
+import type { TranslationKey } from '@/i18n/I18nProvider'
 
 /**
  * Sidebar navigation model.
@@ -15,51 +16,55 @@ import type { LucideIcon } from 'lucide-react'
  * `primary` is the working surface; `secondary` groups the review surfaces
  * (validation, history) and configuration. Counts are injected by the layout so
  * the badges reflect persisted data rather than static labels.
+ *
+ * Labels are translation *keys*, not strings: the navigation is a data
+ * structure shared by the sidebar, the mobile drawer and the document title, so
+ * resolving the key at the render site keeps a single language for all three.
  */
 export interface NavItem {
   to: string
-  label: string
+  labelKey: TranslationKey
+  descriptionKey: TranslationKey
   icon: LucideIcon
   end?: boolean
   badgeKey?: 'pendingReview'
-  description: string
 }
 
 export const PRIMARY_NAV: NavItem[] = [
   {
     to: '/dashboard',
-    label: 'Visão geral',
+    labelKey: 'nav.dashboard',
+    descriptionKey: 'nav.dashboardDescription',
     icon: LayoutDashboard,
     end: true,
-    description: 'Indicadores agregados da sua operação de pesquisa',
   },
   {
     to: '/investigations',
-    label: 'Investigações',
+    labelKey: 'nav.investigations',
+    descriptionKey: 'nav.investigationsDescription',
     icon: FlaskConical,
-    description: 'Todos os seus espaços de pesquisa',
   },
   {
     to: '/validation',
-    label: 'Validação',
+    labelKey: 'nav.validation',
+    descriptionKey: 'nav.validationDescription',
     icon: BadgeCheck,
     badgeKey: 'pendingReview',
-    description: 'Fila de evidências aguardando decisão humana',
   },
   {
     to: '/history',
-    label: 'Histórico',
+    labelKey: 'nav.history',
+    descriptionKey: 'nav.historyDescription',
     icon: Activity,
-    description: 'Trilha de auditoria completa',
   },
 ]
 
 export const SECONDARY_NAV: NavItem[] = [
   {
     to: '/settings',
-    label: 'Configurações',
+    labelKey: 'nav.settings',
+    descriptionKey: 'nav.settingsDescription',
     icon: Settings,
-    description: 'Provedores, limites de consumo e conta',
   },
 ]
 

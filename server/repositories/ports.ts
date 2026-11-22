@@ -141,6 +141,36 @@ export interface UserRepository {
   findByEmail(email: string): Promise<UserRecord | null>
 }
 
+/**
+ * In-flight paid-operation reservations.
+ *
+ * One live reservation per `(ownerId, operation)`. Both adapters enforce that
+ * with a unique index rather than a read-then-write check, so two concurrent
+ * callers cannot both win.
+ *
+ * `acquire` returns a token on success and `null` when another reservation is
+ * still live. It reclaims an expired reservation instead of failing forever, so
+ * a crashed request cannot lock a user out permanently.
+ */
+export interface QuotaReservationRepository {
+  /**
+   * Try to take the reservation.
+   *
+   * @returns the holder token, or `null` when one is already live.
+   */
+  acquire(input: {
+    ownerId: string
+    operation: string
+    token: string
+    expiresAt: number
+    createdAt: string
+  }): Promise<{ token: string; recordId: string } | null>
+  /** Release a reservation, but only if `token` is its holder. */
+  release(input: { ownerId: string; operation: string; token: string }): Promise<boolean>
+  /** Remove expired reservations; returns how many were reclaimed. */
+  purgeExpired(now: number): Promise<number>
+}
+
 export interface Repositories {
   investigations: InvestigationRepository
   evidence: EvidenceRepository
@@ -151,4 +181,5 @@ export interface Repositories {
   researchQueries: ResearchQueryRepository
   settings: SettingsRepository
   users: UserRepository
+  reservations: QuotaReservationRepository
 }

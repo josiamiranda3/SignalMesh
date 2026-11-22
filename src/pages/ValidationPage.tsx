@@ -32,6 +32,7 @@ import {
   validationLabel,
 } from '@/components/ui'
 import { formatDateTime, formatNumber, formatRelative, safeHref } from '@/lib/format'
+import { useI18n } from '@/i18n/I18nProvider'
 import { cn } from '@/lib/utils'
 
 /**
@@ -43,6 +44,7 @@ import { cn } from '@/lib/utils'
  * of a source's status remains visible.
  */
 export default function ValidationPage() {
+  const { t } = useI18n()
   const { id: routeId } = useParams()
   const toast = useToast()
 
@@ -107,11 +109,11 @@ export default function ValidationPage() {
       <PageContainer>
         <EmptyState
           icon={<AlertTriangle className="size-5" aria-hidden />}
-          title="Fila de validação indisponível"
-          description={error?.message ?? 'Não foi possível carregar as evidências para validação.'}
+          title={t('validationPage.unavailableTitle')}
+          description={error?.message ?? t('validationPage.unavailableDescription')}
           action={
             <Link to="/investigations">
-              <Button variant="primary">Voltar para investigações</Button>
+              <Button variant="primary">{t('validationPage.back')}</Button>
             </Link>
           }
         />
@@ -132,15 +134,15 @@ export default function ValidationPage() {
       ) : null}
 
       <PageHeader
-        eyebrow="Validação humana"
-        title={routeId ? 'Decidir sobre as evidências' : 'Fila de validação'}
-        description="A IA organiza; a decisão é sua. Aprovar significa que a fonte é adequada para esta investigação — não que o conteúdo seja cientificamente ou juridicamente verdadeiro."
+        eyebrow={t('validationPage.eyebrow')}
+        title={routeId ? t('validationPage.titleWithInvestigation') : t('validationPage.titleQueue')}
+        description={t('validationPage.description')}
         meta={
           <>
-            <span className="text-[0.75rem] text-ink-subtle">{formatNumber(rows.length)} evidência(s) no total</span>
+            <span className="text-[0.75rem] text-ink-subtle">{t('validationPage.totalCount', { count: formatNumber(rows.length) })}</span>
             <span aria-hidden className="size-1 rounded-full bg-hairline-strong" />
             <span className="text-[0.75rem] text-caution">
-              {counts.needs_review + counts.pending} aguardando decisão
+              {t('validationPage.awaitingDecision', { count: counts.needs_review + counts.pending })}
             </span>
           </>
         }
@@ -148,14 +150,14 @@ export default function ValidationPage() {
 
       <Tabs
         className="mt-6"
-        ariaLabel="Filtrar evidências por status de validação"
+        ariaLabel={t('validationPage.filterAria')}
         value={tab}
         onChange={setTab}
         tabs={[
-          { value: 'pending', label: 'Pendentes', count: counts.pending },
-          { value: 'needs_review', label: 'Em revisão', count: counts.needs_review },
-          { value: 'accepted', label: 'Aprovadas', count: counts.accepted },
-          { value: 'rejected', label: 'Rejeitadas', count: counts.rejected },
+          { value: 'pending', label: t('validationPage.tabPending'), count: counts.pending },
+          { value: 'needs_review', label: t('validationPage.tabNeedsReview'), count: counts.needs_review },
+          { value: 'accepted', label: t('validationPage.tabAccepted'), count: counts.accepted },
+          { value: 'rejected', label: t('validationPage.tabRejected'), count: counts.rejected },
         ]}
       />
 
@@ -165,17 +167,17 @@ export default function ValidationPage() {
             icon={tab === 'pending' ? <Check className="size-5" aria-hidden /> : <ShieldQuestion className="size-5" aria-hidden />}
             title={
               tab === 'pending'
-                ? 'Nenhuma evidência pendente'
+                ? t('validationPage.emptyPending')
                 : tab === 'accepted'
-                  ? 'Nenhuma evidência aprovada ainda'
+                  ? t('validationPage.emptyAccepted')
                   : tab === 'rejected'
-                    ? 'Nenhuma evidência rejeitada'
-                    : 'Nenhuma evidência em revisão'
+                    ? t('validationPage.emptyRejected')
+                    : t('validationPage.emptyNeedsReview')
             }
             description={
               rows.length === 0
-                ? 'Adicione fontes a uma investigação para começar a validar. Cada decisão fica registrada com autor, justificativa e data.'
-                : 'Troque de aba para ver as evidências em outro estado, ou adicione novas fontes à investigação.'
+                ? t('validationPage.emptyDescriptionStart')
+                : t('validationPage.emptyDescriptionOther')
             }
             compact
           />
@@ -195,19 +197,19 @@ export default function ValidationPage() {
       </div>
 
       <div className="mt-6">
-        <Notice tone="info" title="O que cada decisão significa">
+        <Notice tone="info" title={t('validationPage.meaningTitle')}>
           <ul className="mt-1 space-y-1">
             <li>
-              <strong className="text-ink">Aprovada</strong> — a fonte é pertinente e utilizável como suporte nesta
-              investigação.
+              <strong className="text-ink">{t('validationPage.meaningAcceptedStrong')}</strong>{' '}
+              {t('validationPage.meaningAcceptedRest')}
             </li>
             <li>
-              <strong className="text-ink">Em revisão</strong> — há dúvida sobre adequação, data ou método; exige
-              verificação adicional.
+              <strong className="text-ink">{t('validationPage.meaningReviewStrong')}</strong>{' '}
+              {t('validationPage.meaningReviewRest')}
             </li>
             <li>
-              <strong className="text-ink">Rejeitada</strong> — a fonte não deve sustentar conclusões desta
-              investigação.
+              <strong className="text-ink">{t('validationPage.meaningRejectedStrong')}</strong>{' '}
+              {t('validationPage.meaningRejectedRest')}
             </li>
           </ul>
         </Notice>
@@ -221,14 +223,14 @@ export default function ValidationPage() {
           reload()
           toast.success(
             status === 'accepted'
-              ? 'Evidência aprovada'
+              ? t('validationPage.toastAccepted')
               : status === 'rejected'
-                ? 'Evidência rejeitada'
-                : 'Revisão solicitada',
-            'A decisão foi registrada no histórico com sua justificativa.',
+                ? t('validationPage.toastRejected')
+                : t('validationPage.toastReview'),
+            t('validationPage.toastDetail'),
           )
         }}
-        onError={(message) => toast.error('Não foi possível registrar a decisão', message)}
+        onError={(message) => toast.error(t('validationPage.decisionError'), message)}
       />
 
       <HistoryModal evidence={historyTarget} onClose={() => setHistoryTarget(null)} />
@@ -261,6 +263,7 @@ function ValidationRow({
   onDecide: (status: ValidationStatus) => void
   onHistory: () => void
 }) {
+  const { t } = useI18n()
   const { evidence } = row
   const href = safeHref(evidence.url)
   const lastDecision = row.validations[0]
@@ -284,15 +287,15 @@ function ValidationRow({
           <h3 className="mt-2 text-[0.875rem] font-medium leading-snug text-ink">{evidence.title}</h3>
 
           <div className="mt-1.5 flex flex-wrap items-center gap-x-3 gap-y-1 text-[0.75rem] text-ink-faint">
-            <span>{evidence.domain || 'domínio desconhecido'}</span>
+            <span>{evidence.domain || t('evidence.unknownDomain')}</span>
             <span aria-hidden>·</span>
-            <span>{evidence.publishedAt ? formatDateTime(evidence.publishedAt) : 'sem data de publicação'}</span>
+            <span>{evidence.publishedAt ? formatDateTime(evidence.publishedAt) : t('evidence.noPublishedDate')}</span>
             <span aria-hidden>·</span>
-            <span>coletada {formatRelative(evidence.collectedAt)}</span>
+            <span>{t('evidence.collected', { when: formatRelative(evidence.collectedAt) })}</span>
             {evidence.relevanceScore !== null ? (
               <>
                 <span aria-hidden>·</span>
-                <span className="tnum">prioridade {Math.round(evidence.relevanceScore * 100)}</span>
+                <span className="tnum">{t('evidence.priorityValue', { score: Math.round(evidence.relevanceScore * 100) })}</span>
               </>
             ) : null}
           </div>
@@ -303,7 +306,7 @@ function ValidationRow({
 
           {lastDecision?.justification ? (
             <div className="mt-2.5 rounded-md border border-hairline bg-raised/40 px-2.5 py-2">
-              <p className="meta-label mb-1">Última justificativa</p>
+              <p className="meta-label mb-1">{t('validationPage.lastJustification')}</p>
               <p className="text-[0.75rem] leading-relaxed text-ink-subtle">{lastDecision.justification}</p>
               <p className="mt-1 text-[0.75rem] text-ink-faint">{formatDateTime(lastDecision.createdAt)}</p>
             </div>
@@ -318,7 +321,7 @@ function ValidationRow({
             iconLeft={<ThumbsUp className="size-3.5" aria-hidden />}
             className="lg:justify-start"
           >
-            Aprovar
+            {t('validationPage.approveButton')}
           </Button>
           <Button
             variant="secondary"
@@ -327,7 +330,7 @@ function ValidationRow({
             iconLeft={<CircleHelp className="size-3.5" aria-hidden />}
             className="lg:justify-start"
           >
-            Revisão
+            {t('validationPage.reviewButton')}
           </Button>
           <Button
             variant="danger"
@@ -336,11 +339,11 @@ function ValidationRow({
             iconLeft={<ThumbsDown className="size-3.5" aria-hidden />}
             className="lg:justify-start"
           >
-            Rejeitar
+            {t('validationPage.rejectButton')}
           </Button>
           <div className="flex items-center gap-1.5 lg:justify-between">
             <Button variant="quiet" size="sm" onClick={onHistory} iconLeft={<History className="size-3.5" aria-hidden />}>
-              Histórico
+              {t('validationPage.historyButton')}
             </Button>
             {href ? (
               <a
@@ -348,7 +351,7 @@ function ValidationRow({
                 target="_blank"
                 rel="noopener noreferrer nofollow"
                 className="rounded-md p-1.5 text-ink-faint transition-colors hover:bg-white/5 hover:text-ink-muted"
-                aria-label="Abrir fonte original"
+                aria-label={t('research.openSourceAria', { title: evidence.title })}
               >
                 <ExternalLink className="size-3.5" aria-hidden />
               </a>
@@ -371,6 +374,7 @@ function DecisionModal({
   onDone: (status: ValidationStatus) => void
   onError: (message: string) => void
 }) {
+  const { t } = useI18n()
   const [justification, setJustification] = useState('')
   const [busy, setBusy] = useState(false)
   const [localError, setLocalError] = useState<string | null>(null)
@@ -380,7 +384,7 @@ function DecisionModal({
   const submit = async () => {
     if (!target) return
     if (requiresJustification && justification.trim().length < 3) {
-      setLocalError('Informe uma justificativa com pelo menos 3 caracteres para esta decisão.')
+      setLocalError(t('validationPage.justificationTooShort'))
       return
     }
     setBusy(true)
@@ -393,7 +397,7 @@ function DecisionModal({
       onDone(target.status)
       setJustification('')
     } catch (caught) {
-      const message = caught instanceof Error ? caught.message : 'Erro inesperado'
+      const message = caught instanceof Error ? caught.message : t('common.unknownError')
       setLocalError(message)
       onError(message)
     } finally {
@@ -403,12 +407,12 @@ function DecisionModal({
 
   const verbFor = (status: ValidationStatus): string =>
     status === 'accepted'
-      ? 'aprovar'
+      ? t('validationPage.verbApprove')
       : status === 'rejected'
-        ? 'rejeitar'
+        ? t('validationPage.verbReject')
         : status === 'needs_review'
-          ? 'solicitar revisão de'
-          : 'marcar como pendente'
+          ? t('validationPage.verbRequestReview')
+          : t('validationPage.verbMarkPending')
 
   return (
     <Modal
@@ -418,7 +422,11 @@ function DecisionModal({
         setLocalError(null)
         onClose()
       }}
-      title={target ? `Deseja ${verbFor(target.status)} esta evidência?` : 'Registrar decisão'}
+      title={
+        target
+          ? t('validationPage.dialogTitleWithTarget', { verb: verbFor(target.status) })
+          : t('validationPage.dialogTitleFallback')
+      }
       description={target ? target.evidence.title : undefined}
       footer={
         <>
@@ -430,14 +438,14 @@ function DecisionModal({
               onClose()
             }}
           >
-            Cancelar
+            {t('common.cancelAction')}
           </Button>
           <Button
             variant={target?.status === 'rejected' ? 'danger' : 'primary'}
             onClick={() => void submit()}
             loading={busy}
           >
-            Confirmar decisão
+            {t('validationPage.confirmDecision')}
           </Button>
         </>
       }
@@ -450,29 +458,29 @@ function DecisionModal({
                 tone={target.status === 'accepted' ? 'positive' : target.status === 'rejected' ? 'negative' : 'caution'}
                 dot
               >
-                Nova decisão: {validationLabel(target.status)}
+                {t('validationPage.newDecision', { status: validationLabel(target.status) })}
               </Badge>
               <span className="text-[0.75rem] text-ink-faint">
-                anterior: {validationLabel(target.evidence.validationStatus)}
+                {t('validationPage.previousDecision', { status: validationLabel(target.evidence.validationStatus) })}
               </span>
             </div>
             <p className="mt-2 text-[0.75rem] leading-relaxed text-ink-subtle">
               {target.status === 'accepted'
-                ? 'A fonte será marcada como adequada para sustentar conclusões desta investigação.'
+                ? t('validationPage.explainAccepted')
                 : target.status === 'rejected'
-                  ? 'A fonte deixará de ser considerada adequada. A justificativa é obrigatória e ficará no histórico.'
-                  : 'A fonte ficará marcada como pendente de verificação adicional. Explique o que precisa ser conferido.'}
+                  ? t('validationPage.explainRejected')
+                  : t('validationPage.explainReview')}
             </p>
           </div>
         ) : null}
 
         <Field
-          label="Justificativa"
+          label={t('common.justificationLabel')}
           optional={!requiresJustification}
           hint={
             requiresJustification
-              ? 'Obrigatória: explique objetivamente o motivo da decisão.'
-              : 'Opcional, mas recomendada para preservar o raciocínio da decisão.'
+              ? t('validationPage.justificationHintRequired')
+              : t('validationPage.justificationHintOptional')
           }
           error={localError}
           counter={`${justification.length}/2000`}
@@ -484,18 +492,17 @@ function DecisionModal({
             maxLength={2000}
             placeholder={
               target?.status === 'rejected'
-                ? 'Ex.: fonte sem data, sem autoria e sem metodologia descrita.'
+                ? t('validationPage.justificationPlaceholderRejected')
                 : target?.status === 'needs_review'
-                  ? 'Ex.: confirmar se os dados de 2023 foram revisados após a mudança regulatória.'
-                  : 'Ex.: relatório oficial com metodologia e dados primários.'
+                  ? t('validationPage.justificationPlaceholderReview')
+                  : t('validationPage.justificationPlaceholderDefault')
             }
-            aria-label="Justificativa da decisão"
+            aria-label={t('validationPage.justificationAria')}
           />
         </Field>
 
         <Notice tone="info">
-          A decisão é registrada com seu usuário, data e hora. Alterar a decisão depois cria um novo evento — nada é
-          apagado.
+          {t('validationPage.recordNote')} {t('validationPage.recordNoteRest')}
         </Notice>
       </div>
     </Modal>
@@ -503,6 +510,7 @@ function DecisionModal({
 }
 
 function HistoryModal({ evidence, onClose }: { evidence: Evidence | null; onClose: () => void }) {
+  const { t } = useI18n()
   const { data, error, loading } = useAsync<Validation[]>(
     () => (evidence ? api.get<Validation[]>(`/api/evidence/${evidence.id}/validations`) : Promise.resolve([])),
     [evidence?.id],
@@ -512,7 +520,7 @@ function HistoryModal({ evidence, onClose }: { evidence: Evidence | null; onClos
     <Modal
       open={Boolean(evidence)}
       onClose={onClose}
-      title="Histórico de validação"
+      title={t('validationPage.historyTitle')}
       description={evidence?.title}
       footer={
         <Button variant="secondary" onClick={onClose}>
@@ -529,7 +537,7 @@ function HistoryModal({ evidence, onClose }: { evidence: Evidence | null; onClos
         <Notice tone="danger">{error.message}</Notice>
       ) : !data || data.length === 0 ? (
         <p className="py-6 text-center text-[0.8125rem] text-ink-faint">
-          Nenhuma decisão registrada. A evidência está no estado inicial.
+          {t('validationPage.historyEmpty')}
         </p>
       ) : (
         <ol className="relative space-y-4 border-l border-hairline pl-4">
@@ -564,7 +572,7 @@ function HistoryModal({ evidence, onClose }: { evidence: Evidence | null; onClos
               {item.justification ? (
                 <p className="mt-1.5 text-[0.78125rem] leading-relaxed text-ink-muted">{item.justification}</p>
               ) : (
-                <p className="mt-1.5 text-[0.75rem] italic text-ink-faint">Sem justificativa registrada.</p>
+                <p className="mt-1.5 text-[0.75rem] italic text-ink-faint">{t('validationPage.noJustification')}</p>
               )}
               <p className="mt-1 text-[0.75rem] text-ink-faint">{formatDateTime(item.createdAt)}</p>
             </li>

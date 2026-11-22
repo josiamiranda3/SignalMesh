@@ -1,7 +1,7 @@
 import type { SessionUser } from '../../shared/api.ts'
 import type { UserRecord } from '../types.ts'
-import type { AuthMode } from '../lib/auth-context.ts'
 import { userRecordFromClaims } from '../lib/auth-context.ts'
+import { PLATFORM_SESSION_COOKIES, type AuthMode } from '../lib/auth-context.ts'
 import { bearerToken, localSessionToken } from '../http/middleware.ts'
 import type { SessionStore } from '../lib/sessions.ts'
 import type { UserRepository } from '../repositories/ports.ts'
@@ -148,8 +148,12 @@ export class AuthResolver {
     if (bearer) return bearer
 
     const cookies = parseCookie(request.headers.get('cookie'))
-    // The SDK's own cookie name; the value is the raw session token.
-    return cookies['__Secure-better-auth.session_token'] ?? cookies['better-auth.session_token'] ?? null
+    // The SDK's own cookie names; the value is the raw session token.
+    for (const name of PLATFORM_SESSION_COOKIES) {
+      const value = cookies[name]
+      if (value) return value
+    }
+    return null
   }
 
   // -------------------------------------------------------------------------

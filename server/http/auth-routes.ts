@@ -11,8 +11,8 @@ import {
   devUserId,
   parseCookieHeader,
   SESSION_COOKIE,
-} from '../lib/sessions.ts'
-import { createId, nowIso } from '../lib/util.ts'
+} from '../lib/session-cookies.ts'
+import { nowIso } from '../lib/util.ts'
 
 /**
  * Authentication routes.
@@ -86,7 +86,7 @@ export function createAuthRoutes(): Hono<AppEnv> {
     const user =
       existing ??
       (await services.repos.users.upsert({
-        id: devUserId(email) || createId('usr'),
+        id: await devUserId(email),
         email,
         name,
         avatarUrl: null,

@@ -79,6 +79,8 @@ async function main(): Promise<void> {
       EXA_API_KEY: 'flows-key',
       EXA_BASE_URL: `http://127.0.0.1:${providerPort}`,
       ENABLE_EXTERNAL_APIS: 'true',
+      // Simulated provider only; since v0.2.4.3 a paid operation needs this on.
+      ENABLE_PAID_OPERATIONS: 'true',
       RESEARCH_DAILY_LIMIT: '20',
       DUPLICATE_GUARD_SECONDS: '0',
       SEED_DEMO_DATA: 'true',

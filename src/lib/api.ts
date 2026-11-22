@@ -32,15 +32,34 @@ export class ApiError extends Error {
     this.retryable = payload.retryable ?? false
   }
 
-  /** Field-level messages keyed by input path, for forms. */
+  /**
+   * Field-level messages keyed by input path, for forms.
+   *
+   * Array elements are folded onto their field (`keywords.0` → `keywords`),
+   * because a form holds one message per field and would otherwise find
+   * nothing for an invalid list item — the field stays unmarked and the user
+   * only sees the generic banner. See `fieldErrorKey`.
+   */
   fieldErrors(): Record<string, string> {
     const result: Record<string, string> = {}
     for (const detail of this.details ?? []) {
-      if (detail.path && detail.path !== '(raiz)' && !result[detail.path]) result[detail.path] = detail.message
+      if (!detail.path || detail.path === '(raiz)') continue
+      const key = fieldErrorKey(detail.path.split('.'))
+      if (!result[key]) result[key] = detail.message
     }
     return result
   }
 }
+
+import { fieldErrorKey } from './field-errors'
+
+/**
+ * Collapse zod issue paths onto the keys a form actually reads.
+ *
+ * Re-exported from `./field-errors`, where the DOM-free implementation lives so
+ * server-side tests can import it without pulling in `document`.
+ */
+export { fieldErrorKey }
 
 interface RequestOptions {
   method?: 'GET' | 'POST' | 'PATCH' | 'DELETE'

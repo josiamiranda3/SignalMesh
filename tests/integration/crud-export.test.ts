@@ -23,6 +23,9 @@ before(async () => {
     RESEARCH_GLOBAL_DAILY_LIMIT: '1000',
     ANALYSIS_GLOBAL_DAILY_LIMIT: '1000',
     DUPLICATE_GUARD_SECONDS: '0',
+    // This suite performs simulated research and analysis, which since v0.2.4.3
+    // require both cost switches. The providers are the local mock.
+    ENABLE_PAID_OPERATIONS: 'true',
   })
   client = await signIn(harness.base, 'crud@example.com', 'CRUD')
 })

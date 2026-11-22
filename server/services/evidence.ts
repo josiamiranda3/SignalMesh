@@ -1,7 +1,7 @@
 import type { Evidence, Investigation, ValidationStatus } from '../../shared/domain.ts'
 import type { EvidenceBulkCreateInput, EvidenceCreateInput } from '../../shared/schemas.ts'
 import { scoreRelevance } from '../../shared/relevance.ts'
-import { normalizeUrl } from '../repositories/sqlite.ts'
+import { normalizeUrl } from '../lib/util.ts'
 import type { Repositories } from '../repositories/ports.ts'
 import { errors } from '../lib/errors.ts'
 import { createId, extractDomain, isSafeHttpUrl, nowIso } from '../lib/util.ts'
@@ -18,6 +18,33 @@ import type { InvestigationService } from './investigations.ts'
  *   stored with its full breakdown, so a later weight change never rewrites
  *   history silently.
  */
+/**
+ * Provenance of an evidence row.
+ *
+ * `sourceMetadata` is the only free-form column, so the origin lives there for
+ * diagnostics; the `source` column itself keeps the coarse label the exports and
+ * the UI read.
+ *
+ * Until v0.2.4.1 every row was written as `'exa'`, including rows created through
+ * `POST /api/investigations/:id/evidence` (the manual path) — so a hand-entered
+ * source was indistinguishable from a research result in JSON and CSV exports.
+ * The label is now decided by the *call path*, not by a constant:
+ *
+ *   - `addMany` (bulk) is reachable only from the research screen, whose input
+ *     comes from an Exa response → `'exa'`;
+ *   - `addOne` is the manual entry point → `'manual'`.
+ *
+ * Existing rows are left untouched: rewriting history would falsify the audit
+ * trail, and `'exa'` is still a valid value for them. New manual rows are
+ * unambiguous, and the distinction is additive — no consumer breaks.
+ */
+export type EvidenceOrigin = 'exa' | 'manual'
+
+/** Human-readable label for an origin, used in activity descriptions. */
+function originLabel(origin: EvidenceOrigin): string {
+  return origin === 'manual' ? 'cadastro manual' : 'pesquisa externa'
+}
+
 export class EvidenceService {
   constructor(
     private readonly repos: Repositories,
@@ -29,6 +56,7 @@ export class EvidenceService {
     investigation: Investigation,
     source: EvidenceCreateInput['source'],
     ownerId: string,
+    origin: EvidenceOrigin,
   ): Evidence {
     const domain = source.domain || extractDomain(source.url)
     const breakdown = scoreRelevance(
@@ -54,8 +82,9 @@ export class EvidenceService {
       publishedAt: source.publishedAt,
       author: source.author,
       collectedAt: timestamp,
-      source: 'exa',
+      source: origin,
       sourceMetadata: {
+        origin,
         providerRequestId: source.providerRequestId,
         contentAvailability: source.contentAvailability,
         capturedDomain: domain,
@@ -86,17 +115,18 @@ export class EvidenceService {
       return { evidence: existing, duplicate: true }
     }
 
-    const evidence = this.buildEvidence(investigation, input.source, ownerId)
+    const evidence = this.buildEvidence(investigation, input.source, ownerId, 'manual')
     await this.repos.evidence.create(evidence)
     await this.activity.record({
       investigationId,
       ownerId,
       eventType: 'evidence.added',
-      description: `Evidência "${evidence.title}" adicionada a partir de ${evidence.domain || 'fonte externa'}`,
+      description: `Evidência "${evidence.title}" adicionada por ${originLabel('manual')} (${evidence.domain || 'fonte externa'})`,
       metadata: {
         evidenceId: evidence.id,
         url: evidence.url,
         relevanceScore: evidence.relevanceScore,
+        origin: 'manual',
       },
     })
     return { evidence, duplicate: false }
@@ -128,7 +158,7 @@ export class EvidenceService {
         skipped.push({ url: source.url, reason: 'Fonte já adicionada a esta investigação' })
         continue
       }
-      const evidence = this.buildEvidence(investigation, source, ownerId)
+      const evidence = this.buildEvidence(investigation, source, ownerId, 'exa')
       await this.repos.evidence.create(evidence)
       added.push(evidence)
     }
@@ -138,8 +168,13 @@ export class EvidenceService {
         investigationId,
         ownerId,
         eventType: 'evidence.added',
-        description: `${added.length} evidência(s) adicionada(s) da pesquisa`,
-        metadata: { count: added.length, skipped: skipped.length, evidenceIds: added.map((item) => item.id) },
+        description: `${added.length} evidência(s) adicionada(s) por ${originLabel('exa')}`,
+        metadata: {
+          count: added.length,
+          skipped: skipped.length,
+          evidenceIds: added.map((item) => item.id),
+          origin: 'exa',
+        },
       })
     }
 

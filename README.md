@@ -2,10 +2,15 @@
 
 **Research & Evidence Intelligence Platform**
 
-> **v0.2.1 — arquitetura DeepSpace, após auditoria de segurança.** O runtime de produção é um Cloudflare Worker com
+> **v0.2.4.2 — cadastro manual de evidências.** O runtime de produção é um Cloudflare Worker com
 > DeepSpace Auth e DeepSpace Records. O runtime Node com SQLite permanece para
 > desenvolvimento e testes. O app **não está publicado** e **não está registrado** na
 > plataforma — ver [docs/deployment.md](docs/deployment.md).
+>
+> A v0.2.4.2 acrescenta o cadastro manual de evidências na tela de evidências — sem Exa,
+> sem Gemini, sem nenhum serviço externo — e corrige a procedência: toda evidência era
+> gravada como `exa`, inclusive as digitadas à mão. Ver
+> [docs/changes-v0.2.4.2.md](docs/changes-v0.2.4.2.md).
 
 O SignalMesh transforma informação dispersa em evidências organizadas, analisadas e
 validadas por pessoas. Não é um chatbot: é um ambiente de pesquisa onde toda conclusão
@@ -191,10 +196,10 @@ comparado. Detalhes em [docs/architecture.md](docs/architecture.md).
 │
 ├── scripts/migrate-to-records.ts
 ├── tests/
-│   ├── unit/                        # 70
-│   ├── integration/                 # 154
+│   ├── unit/                        # 74
+│   ├── integration/                 # 335
 │   ├── e2e/                         # 78 verificações em navegador real
-│   └── worker/                      # empacotamento + smoke do runtime
+│   └── worker/                      # 31 (contrato estático + empacotamento)
 └── docs/                            # arquitetura, banco, segurança, ...
 ```
 
@@ -292,7 +297,7 @@ registrá-lo e travar a origem permanentemente. Ver
 ```bash
 npm run typecheck        # cliente + servidor
 npm run lint             # ESLint (zero avisos)
-npm run test             # 306 testes (unit + integração + contrato)
+npm run test             # 479 testes (unit + integração + contrato)
 npm run test:e2e         # 56 verificações em navegador real
 npm run test:flows       # 22 verificações de fluxos complementares
 npm run audit:design     # auditoria de design em 3 viewports
@@ -300,21 +305,25 @@ npm run test:worker      # empacotamento do Worker (+ execução ao vivo se poss
 npm run verify           # typecheck + lint + build + test
 ```
 
-Resultados verificados neste ambiente:
+Resultados da validação operacional da v0.2.4.1, executados neste ambiente:
 
 | Suíte | Resultado |
 | --- | --- |
-| Unitários | ✅ 70/70 |
-| Integração | ✅ 236/236 |
+| Unitários | ✅ 74/74 |
+| Integração | ✅ 374/374 |
+| Contrato do Worker | ✅ 31/31 |
+| **Total automatizado** | **✅ 479/479** |
 | E2E fluxo principal | ✅ 56/56 |
 | E2E fluxos complementares | ✅ 22/22 |
-| Auditoria de design | ✅ 0 problemas |
-| Contrato do Worker | ✅ 17/17 |
+| Auditoria de design | ✅ 0 problemas (13 rotas × 3 viewports) |
 | Worker — empacotamento | ✅ 17/17 |
-| Worker — execução em workerd | ⏭ SKIPPED (workerd não inicia neste ambiente) |
-| Lint de schema do SDK | ✅ 0 avisos |
+| Worker — execução em workerd | ⏭ SKIPPED (o binário crasha com `std::terminate` neste ambiente) |
 
-Detalhes e limitações em [docs/testing.md](docs/testing.md).
+As quatro suítes que apareciam como não executadas passaram. Elas exigem que o comando rode
+**fora do confinamento do sandbox**, que bloqueia named pipes — o que impedia o Chrome de
+iniciar e o esbuild do wrangler de abrir seu canal IPC. A causa está diagnosticada em
+[docs/validation-v0.2.4.1.md](docs/validation-v0.2.4.1.md) e o procedimento em
+[docs/testing.md](docs/testing.md) §4.19. Nenhuma linha de código foi alterada para isso.
 
 ## Integração com a Exa
 
@@ -422,6 +431,10 @@ O relatório de quotas, riscos e o gate obrigatório está em
 | [docs/testing.md](docs/testing.md) | Estratégia, suítes, resultados reais, limites |
 | [docs/decisions.md](docs/decisions.md) | Decisões e alternativas descartadas |
 | [docs/audit-v0.2.1.md](docs/audit-v0.2.1.md) | Auditoria de segurança: problemas, correções, riscos |
+| [docs/audit-v0.2.4.md](docs/audit-v0.2.4.md) | Auditoria do `authorizedParties` na rota privilegiada |
+| [docs/validation-v0.2.4.1.md](docs/validation-v0.2.4.1.md) | Validação operacional local: causas dos bloqueios de E2E e wrangler |
+| [docs/preflight-deepspace-v0.2.4.1.md](docs/preflight-deepspace-v0.2.4.1.md) | Pré-verificação DeepSpace: conta, SDK, requisitos e custos |
+| [docs/changes-v0.2.4.2.md](docs/changes-v0.2.4.2.md) | v0.2.4.2: cadastro manual de evidências e correção da procedência |
 | [docs/deployment.md](docs/deployment.md) | Gate de implantação, quotas, riscos, checklist |
 
 ## Licença

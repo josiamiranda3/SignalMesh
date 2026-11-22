@@ -1,9 +1,7 @@
-import { createHash, createHmac, randomBytes, timingSafeEqual } from 'node:crypto'
-import type { SessionUser } from '../../shared/api.ts'
+import { createHash, randomBytes } from 'node:crypto'
 import type { UserRecord } from '../types.ts'
 import type { UserRepository } from '../repositories/ports.ts'
 import { get, run, type Database } from '../db.ts'
-import { errors } from './errors.ts'
 import { createId, nowIso } from './util.ts'
 
 /**
@@ -17,9 +15,27 @@ import { createId, nowIso } from './util.ts'
  * - The cookie carries a 256-bit random token; only its SHA-256 hash is stored.
  * - Session rows expire and are deleted on logout.
  * - The token is opaque (no claims), so revocation is immediate.
+ *
+ * ## Scope note
+ *
+ * Everything here touches the local SQLite database, so importing this module
+ * from the Worker would drag `node:sqlite` into the edge bundle. The cookie and
+ * CSRF primitives that both runtimes need live in `./session-cookies.ts`; they
+ * are re-exported below so existing importers keep working, but **new worker
+ * code must import them from `./session-cookies.ts`** to keep the Node-only
+ * runtime out of the platform graph.
  */
 
-export const SESSION_COOKIE = 'signalmess_session'
+export {
+  SESSION_COOKIE,
+  CSRF_HEADER,
+  CSRF_VALUE,
+  buildClearSessionCookie,
+  buildSessionCookie,
+  parseCookieHeader,
+  toSessionUser,
+  type DevIdentity,
+} from './session-cookies.ts'
 
 export interface SessionRecord {
   tokenHash: string
@@ -82,92 +98,8 @@ export class SessionStore {
   }
 }
 
-/** Strip everything the API must never expose (email is user-private). */
-export function toSessionUser(user: UserRecord): SessionUser {
-  return {
-    id: user.id,
-    name: user.name,
-    email: user.email,
-    avatarUrl: user.avatarUrl,
-  }
-}
-
-/**
- * The local runtime issues its own sessions. This module also provides the
- * development sign-in identities: a fixed set of local accounts so an operator
- * can test isolation between two users without creating an external account.
- */
-export interface DevIdentity {
-  email: string
-  name: string
-}
-
-export function parseCookieHeader(header: string | null): Record<string, string> {
-  if (!header) return {}
-  const result: Record<string, string> = {}
-  for (const part of header.split(';')) {
-    const index = part.indexOf('=')
-    if (index === -1) continue
-    const key = part.slice(0, index).trim()
-    const value = part.slice(index + 1).trim()
-    if (key) result[key] = decodeURIComponent(value)
-  }
-  return result
-}
-
-export function buildSessionCookie(token: string, options: { maxAge: number; secure: boolean }): string {
-  const parts = [
-    `${SESSION_COOKIE}=${encodeURIComponent(token)}`,
-    'Path=/',
-    'HttpOnly',
-    'SameSite=Lax',
-    `Max-Age=${options.maxAge}`,
-  ]
-  if (options.secure) parts.push('Secure')
-  return parts.join('; ')
-}
-
-export function buildClearSessionCookie(secure: boolean): string {
-  const parts = [`${SESSION_COOKIE}=`, 'Path=/', 'HttpOnly', 'SameSite=Lax', 'Max-Age=0']
-  if (secure) parts.push('Secure')
-  return parts.join('; ')
-}
-
-/** Constant-time comparison used by the CSRF token check. */
-export function safeEqual(a: string, b: string): boolean {
-  const left = Buffer.from(a)
-  const right = Buffer.from(b)
-  if (left.length !== right.length) return false
-  return timingSafeEqual(left, right)
-}
-
-/**
- * CSRF protection: state-changing requests must carry the same-origin marker
- * header. Combined with SameSite=Lax cookies this blocks cross-site form posts.
- */
-export const CSRF_HEADER = 'x-signalmess-request'
-export const CSRF_VALUE = '1'
-
-export function requireSameOrigin(headers: Headers, appOrigin: string): void {
-  const origin = headers.get('origin')
-  if (origin && origin !== appOrigin) {
-    throw errors.forbidden('Origem da requisição não permitida')
-  }
-  if (headers.get(CSRF_HEADER) !== CSRF_VALUE) {
-    throw errors.forbidden('Requisição sem o cabeçalho de proteção CSRF')
-  }
-}
-
 /** Derive a deterministic local user id from an email, for dev sign-in. */
-export function devUserId(email: string): string {
-  const normalized = email.trim().toLowerCase()
-  return `usr_${createHash('sha256').update(normalized).digest('hex').slice(0, 16)}`
-}
-
-/** HMAC used to sign nothing but the demo seed marker. Kept for symmetry. */
-export function signValue(secret: string, value: string): string {
-  return createHmac('sha256', secret).update(value).digest('base64url')
-}
+export { devUserId } from './session-cookies.ts'
 
 export function newUserId(): string {
   return createId('usr')

@@ -6,6 +6,7 @@ import { Button, Field, Input, Notice, ToastProvider } from '@/components/ui'
 import { useAuth } from '@/app/AuthProvider'
 import { ApiError } from '@/lib/api'
 import { APP_TAGLINE } from '@/app/constants'
+import { useI18n } from '@/i18n/I18nProvider'
 
 /**
  * Sign-in.
@@ -30,6 +31,7 @@ export default function LoginPage() {
 }
 
 function LoginScreen() {
+  const { t } = useI18n()
   const { status, user, mode, signIn, refresh } = useAuth()
   const navigate = useNavigate()
   const [params] = useSearchParams()
@@ -58,7 +60,7 @@ function LoginScreen() {
         setError(caught.message)
         setFields(caught.fieldErrors())
       } else {
-        setError('Não foi possível entrar. Tente novamente.')
+        setError(t('login.signInError'))
       }
     } finally {
       setSubmitting(false)
@@ -68,7 +70,7 @@ function LoginScreen() {
   return (
     <div className="relative z-10 grid min-h-screen lg:grid-cols-[1.05fr_1fr]">
       {/* Left: context */}
-      <div className="relative hidden flex-col justify-between border-r border-hairline bg-base/50 p-10 lg:flex">
+      <div className="relative hidden flex-col justify-between border-r border-hairline bg-base/50 p-12 lg:flex">
         <div aria-hidden className="grid-fade pointer-events-none absolute inset-0" />
         <Link to="/" className="relative flex min-h-9 items-center gap-2.5">
           <Logo size={28} />
@@ -77,23 +79,22 @@ function LoginScreen() {
 
         <div className="relative max-w-md">
           <p className="eyebrow">{APP_TAGLINE}</p>
-          <h1 className="mt-4 text-balance text-3xl font-semibold leading-tight tracking-[-0.025em]">
-            Cada conclusão vinculada à fonte que a sustenta.
+          <h1 className="mt-4 text-balance text-[2rem] font-semibold leading-[1.12] tracking-[-0.03em]">
+            {t('login.headline')}
           </h1>
-          <p className="mt-4 text-[0.875rem] leading-relaxed text-ink-muted">
-            Organize pesquisas, colete evidências, peça análises estruturadas e registre a decisão
-            humana — com histórico completo de cada passo.
+          <p className="mt-4 text-[0.875rem] leading-[1.75] text-ink-muted">
+            {t('login.body')}
           </p>
 
           <div className="mt-10 space-y-4">
             {[
-              { icon: Lock, text: 'Sessão persistente, revogável no servidor' },
-              { icon: ShieldCheck, text: 'Seus dados nunca aparecem para outra conta' },
-              { icon: ArrowRight, text: 'Trilha de auditoria de todas as operações' },
+              { icon: Lock, text: t('login.pointSession') },
+              { icon: ShieldCheck, text: t('login.pointIsolation') },
+              { icon: ArrowRight, text: t('login.pointAudit') },
             ].map((item) => (
               <div key={item.text} className="flex items-center gap-3 text-[0.8125rem] text-ink-muted">
                 <div className="flex size-7 items-center justify-center rounded-md border border-hairline-strong bg-raised">
-                  <item.icon className="size-3.5 text-signal-bright" aria-hidden />
+                  <item.icon className="size-3.5 text-ink-faint" aria-hidden />
                 </div>
                 {item.text}
               </div>
@@ -102,8 +103,7 @@ function LoginScreen() {
         </div>
 
         <p className="relative text-[0.75rem] text-ink-faint">
-          Ao entrar você reconhece que conteúdo de pesquisa selecionado pode ser enviado aos provedores
-          externos configurados para processamento.
+          {t('login.disclaimer')}
         </p>
       </div>
 
@@ -115,21 +115,21 @@ function LoginScreen() {
             <Wordmark className="text-[0.9375rem]" />
           </div>
 
-          <h2 className="text-xl font-semibold tracking-[-0.02em]">Entrar no SignalMesh</h2>
+          <h2 className="text-[1.375rem] font-semibold tracking-[-0.025em] text-ink">{t('login.title')}</h2>
           <p className="mt-1.5 text-[0.8125rem] text-ink-subtle">
-            Identifique-se para acessar suas investigações.
+            {t('login.subtitle')}
           </p>
 
           {mode === 'deepspace' ? (
             <DeepSpaceSignIn onSignedIn={() => void refresh()} />
           ) : (
-            <form onSubmit={onSubmit} className="mt-7 space-y-4" noValidate>
+            <form onSubmit={onSubmit} className="mt-6 space-y-4" noValidate>
               {error ? <Notice tone="danger">{error}</Notice> : null}
 
               <Field
-                label="E-mail"
+                label={t('login.emailLabel')}
                 error={fields['email']}
-                hint="Usado apenas para identificar sua conta neste ambiente."
+                hint={t('login.emailHint')}
               >
                 <div className="relative">
                   <Mail
@@ -142,7 +142,7 @@ function LoginScreen() {
                     autoComplete="email"
                     required
                     autoFocus
-                    placeholder="voce@exemplo.com"
+                    placeholder={t('login.emailPlaceholder')}
                     className="pl-9"
                     value={email}
                     invalid={Boolean(fields['email'])}
@@ -151,7 +151,12 @@ function LoginScreen() {
                 </div>
               </Field>
 
-              <Field label="Nome de exibição" optional error={fields['name']} hint="Se vazio, derivamos do e-mail.">
+              <Field
+                label={t('login.nameLabel')}
+                optional
+                error={fields['name']}
+                hint={t('login.nameHint')}
+              >
                 <div className="relative">
                   <User
                     className="pointer-events-none absolute left-3 top-1/2 size-3.5 -translate-y-1/2 text-ink-faint"
@@ -161,7 +166,7 @@ function LoginScreen() {
                     type="text"
                     name="name"
                     autoComplete="name"
-                    placeholder="Como você quer ser chamado"
+                    placeholder={t('login.namePlaceholder')}
                     className="pl-9"
                     value={name}
                     onChange={(event) => setName(event.target.value)}
@@ -170,28 +175,26 @@ function LoginScreen() {
               </Field>
 
               <Button type="submit" variant="primary" size="lg" className="w-full justify-center" loading={submitting}>
-                {submitting ? 'Entrando…' : 'Entrar'}
+                {submitting ? t('login.submitting') : t('login.submit')}
               </Button>
             </form>
           )}
 
           <div className="mt-6">
             {mode === 'deepspace' ? (
-              <Notice tone="info" title="Autenticação DeepSpace">
-                A identidade é verificada pela plataforma e chega ao servidor como um JWT assinado. O
-                SignalMesh não emite, não assina e não armazena credenciais.
+              <Notice tone="info" title={t('login.deepspaceNoticeTitle')}>
+                {t('login.deepspaceNoticeBody')}
               </Notice>
             ) : (
-              <Notice tone="info" title="Autenticação deste ambiente">
-                Este ambiente usa um adaptador de sessão local, destinado a desenvolvimento e testes. Em
-                produção a autenticação é feita pelo DeepSpace Auth.
+              <Notice tone="info" title={t('login.localNoticeTitle')}>
+                {t('login.localNoticeBody')}
               </Notice>
             )}
           </div>
 
           <p className="mt-6 text-center text-[0.75rem] text-ink-faint">
             <Link to="/" className="underline decoration-hairline-strong underline-offset-4 hover:text-ink-muted">
-              Voltar para a página inicial
+              {t('login.backHome')}
             </Link>
           </p>
         </div>
@@ -209,6 +212,7 @@ function LoginScreen() {
  * blank screen.
  */
 function DeepSpaceSignIn({ onSignedIn }: { onSignedIn: () => void }) {
+  const { t } = useI18n()
   const [Overlay, setOverlay] = useState<React.ComponentType<{ onClose?: () => void }> | null>(null)
   const [loadError, setLoadError] = useState<string | null>(null)
 
@@ -222,12 +226,12 @@ function DeepSpaceSignIn({ onSignedIn }: { onSignedIn: () => void }) {
         setOverlay(() => mod.AuthOverlay as unknown as React.ComponentType<{ onClose?: () => void }>)
       })
       .catch(() => {
-        if (active) setLoadError('Não foi possível carregar a interface de autenticação da plataforma.')
+        if (active) setLoadError(t('login.overlayLoadError'))
       })
     return () => {
       active = false
     }
-  }, [])
+  }, [t])
 
   // The overlay reports completion by closing; re-read the session afterwards
   // so the provider picks up the new identity from the server.
@@ -236,7 +240,7 @@ function DeepSpaceSignIn({ onSignedIn }: { onSignedIn: () => void }) {
   if (loadError) {
     return (
       <div className="mt-7">
-        <Notice tone="danger" title="Autenticação indisponível">
+        <Notice tone="danger" title={t('login.overlayUnavailableTitle')}>
           {loadError}
         </Notice>
       </div>
@@ -250,7 +254,7 @@ function DeepSpaceSignIn({ onSignedIn }: { onSignedIn: () => void }) {
       ) : (
         <div className="flex flex-col items-center gap-3 rounded-lg border border-hairline bg-surface/60 px-6 py-10">
           <div className="size-6 animate-spin rounded-full border-2 border-hairline-strong border-t-signal" aria-hidden />
-          <p className="text-[0.8125rem] text-ink-subtle">Carregando autenticação da plataforma…</p>
+          <p className="text-[0.8125rem] text-ink-subtle">{t('login.overlayLoading')}</p>
         </div>
       )}
     </div>

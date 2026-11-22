@@ -17,6 +17,8 @@ import { PageContainer, PageHeader } from '@/components/layout/Page'
 import { Badge, Button, EmptyState, Input, Notice, Select, Skeleton } from '@/components/ui'
 import { formatDateTime, formatNumber, formatRelative } from '@/lib/format'
 import { cn } from '@/lib/utils'
+import { useI18n, type TranslationKey } from '@/i18n/I18nProvider'
+import { getActiveIntlLocale } from '@/lib/active'
 
 /**
  * History.
@@ -26,14 +28,15 @@ import { cn } from '@/lib/utils'
  * state, so a reload or a different device shows the same sequence.
  */
 
-const EVENT_GROUPS: Array<{ value: string; label: string; types: ActivityType[] }> = [
-  { value: '', label: 'Todos os eventos', types: [] },
-  { value: 'investigation', label: 'Investigações', types: ['investigation.created', 'investigation.updated', 'investigation.status_changed', 'investigation.archived', 'investigation.deleted'] },
-  { value: 'research', label: 'Pesquisas', types: ['research.executed', 'quota.blocked'] },
-  { value: 'evidence', label: 'Evidências', types: ['evidence.added', 'evidence.updated', 'evidence.removed', 'evidence.note_updated'] },
-  { value: 'analysis', label: 'Análises', types: ['analysis.requested', 'analysis.completed', 'analysis.failed'] },
-  { value: 'validation', label: 'Validações', types: ['validation.recorded'] },
-  { value: 'export', label: 'Exportações', types: ['export.generated'] },
+/** Filter groups: the label is a key, resolved at render. */
+const EVENT_GROUPS: Array<{ value: string; labelKey: TranslationKey; types: ActivityType[] }> = [
+  { value: '', labelKey: 'history.groupAll', types: [] },
+  { value: 'investigation', labelKey: 'history.groupInvestigation', types: ['investigation.created', 'investigation.updated', 'investigation.status_changed', 'investigation.archived', 'investigation.deleted'] },
+  { value: 'research', labelKey: 'history.groupResearch', types: ['research.executed', 'quota.blocked'] },
+  { value: 'evidence', labelKey: 'history.groupEvidence', types: ['evidence.added', 'evidence.updated', 'evidence.removed', 'evidence.note_updated'] },
+  { value: 'analysis', labelKey: 'history.groupAnalysis', types: ['analysis.requested', 'analysis.completed', 'analysis.failed'] },
+  { value: 'validation', labelKey: 'history.groupValidation', types: ['validation.recorded'] },
+  { value: 'export', labelKey: 'history.groupExport', types: ['export.generated'] },
 ]
 
 const EVENT_META: Record<string, { icon: typeof Activity; tone: 'neutral' | 'signal' | 'positive' | 'caution' | 'negative' }> = {
@@ -56,6 +59,7 @@ const EVENT_META: Record<string, { icon: typeof Activity; tone: 'neutral' | 'sig
 }
 
 export default function HistoryPage() {
+  const { t } = useI18n()
   const [query, setQuery] = useState('')
   const [group, setGroup] = useState('')
   const [expandedId, setExpandedId] = useState<string | null>(null)
@@ -95,17 +99,19 @@ export default function HistoryPage() {
   return (
     <PageContainer>
       <PageHeader
-        eyebrow="Auditoria"
-        title="Histórico"
-        description="Trilha completa de eventos persistidos: criação e edição de investigações, pesquisas, evidências, análises, validações e exportações."
+        eyebrow={t('history.eyebrow')}
+        title={t('history.title')}
+        description={t('history.description')}
         meta={
           data ? (
-            <span className="text-[0.75rem] text-ink-subtle">{formatNumber(data.total)} evento(s) registrados</span>
+            <span className="text-[0.75rem] text-ink-subtle">
+              {t('history.eventCount', { count: formatNumber(data.total) })}
+            </span>
           ) : null
         }
         actions={
           <Button variant="secondary" size="md" onClick={reload}>
-            Atualizar
+            {t('history.refresh')}
           </Button>
         }
       />
@@ -116,27 +122,27 @@ export default function HistoryPage() {
           <Input
             value={query}
             onChange={(event) => setQuery(event.target.value)}
-            placeholder="Buscar na descrição dos eventos"
-            aria-label="Buscar no histórico"
+            placeholder={t('history.searchPlaceholder')}
+            aria-label={t('history.searchAria')}
             className="pl-9"
           />
         </div>
         <Select
-          aria-label="Filtrar por tipo de evento"
+          aria-label={t('history.filterAria')}
           className="w-full sm:w-[220px]"
           value={group}
           onChange={(event) => setGroup(event.target.value)}
-          options={EVENT_GROUPS.map((item) => ({ value: item.value, label: item.label }))}
+          options={EVENT_GROUPS.map((item) => ({ value: item.value, label: t(item.labelKey) }))}
         />      </div>
 
       {error ? (
         <div className="mt-5">
           <Notice
             tone="danger"
-            title="Não foi possível carregar o histórico"
+            title={t('history.loadError')}
             action={
               <Button size="sm" onClick={reload}>
-                Tentar novamente
+                {t('common.retry')}
               </Button>
             }
           >
@@ -155,16 +161,16 @@ export default function HistoryPage() {
         ) : filtered.length === 0 ? (
           <EmptyState
             icon={<Activity className="size-5" aria-hidden />}
-            title={data && data.total > 0 ? 'Nenhum evento corresponde aos filtros' : 'Nenhum evento registrado ainda'}
+            title={data && data.total > 0 ? t('history.noMatchTitle') : t('history.emptyTitle')}
             description={
               data && data.total > 0
-                ? 'Ajuste a busca ou o tipo de evento. O histórico não é alterado por filtros.'
-                : 'Assim que você criar uma investigação, executar uma pesquisa ou registrar uma validação, os eventos aparecerão aqui em ordem cronológica.'
+                ? t('history.noMatchDescription')
+                : t('history.emptyDescription')
             }
             action={
               <Link to="/investigations/new">
                 <Button variant="primary" size="sm">
-                  Criar investigação
+                  {t('history.createInvestigation')}
                 </Button>
               </Link>
             }
@@ -176,7 +182,9 @@ export default function HistoryPage() {
                 <h2 className="mb-2.5 flex items-center gap-2 text-[0.75rem] font-medium text-ink-subtle">
                   <span className="tnum">{formatDayLabel(day)}</span>
                   <span aria-hidden className="h-px flex-1 bg-hairline" />
-                  <span className="text-[0.75rem] text-ink-faint">{entries.length} evento(s)</span>
+                  <span className="text-[0.75rem] text-ink-faint">
+                    {t('history.eventsInDay', { count: entries.length })}
+                  </span>
                 </h2>
                 <ul className="panel divide-y divide-hairline/60 overflow-hidden">
                   {entries.map((entry) => {
@@ -212,7 +220,7 @@ export default function HistoryPage() {
                                   onClick={(event) => event.stopPropagation()}
                                   className="ml-2 inline-flex min-h-6 items-center text-ink-subtle underline decoration-hairline-strong underline-offset-2 transition-colors hover:text-ink"
                                 >
-                                  ver investigação
+                                  {t('history.viewInvestigation')}
                                 </Link>
                               ) : null}
                             </p>
@@ -225,7 +233,7 @@ export default function HistoryPage() {
                           ) : null}
                         </button>
                         {expanded && hasMetadata ? (
-                          <div className="border-t border-hairline/60 bg-[#080b12] px-4 py-3">
+                          <div className="border-t border-hairline/60 bg-canvas/60 px-4 py-3">
                             <pre className="overflow-x-auto whitespace-pre-wrap break-all font-mono text-[0.75rem] leading-relaxed text-ink-subtle">
                               {JSON.stringify(entry.metadata, null, 2)}
                             </pre>
@@ -244,10 +252,16 @@ export default function HistoryPage() {
   )
 }
 
+/**
+ * Day heading for a group.
+ *
+ * Formats in the locale the interface is currently in, not a fixed one, so the
+ * headings change with the language like every other date on the page.
+ */
 function formatDayLabel(isoDay: string): string {
   const date = new Date(`${isoDay}T12:00:00Z`)
   if (Number.isNaN(date.getTime())) return isoDay
-  return new Intl.DateTimeFormat('pt-BR', {
+  return new Intl.DateTimeFormat(getActiveIntlLocale(), {
     weekday: 'short',
     day: '2-digit',
     month: 'long',

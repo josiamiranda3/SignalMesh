@@ -60,7 +60,7 @@ export interface WorkerServices extends Services {
 }
 
 /** Build a caller that posts one tool invocation to the RecordRoom. */
-function createRoomCaller(input: {
+export function createRoomCaller(input: {
   env: WorkerBindings
   userId: string
   appAction: boolean
@@ -210,6 +210,7 @@ export function createWorkerServices(options: CreateWorkerServicesOptions): Work
       researchQueries: repos.researchQueries,
       settings: repos.settings,
       users: repos.users,
+      reservations: repos.reservations,
     },
     auth,
   })

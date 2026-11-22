@@ -72,6 +72,8 @@ export class AnalysisService {
       investigationTitle: investigation.title,
       topic: investigation.topic,
       objective: investigation.objective,
+      // Output language only: the evidence below is passed through verbatim.
+      outputLanguage: input.outputLanguage ?? 'pt-BR',
       evidences: selected.map((item) => ({
         id: item.id,
         title: item.title,

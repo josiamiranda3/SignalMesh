@@ -1,4 +1,5 @@
 import { all, get, run, type Database } from '../db.ts'
+import { normalizeUrl } from '../lib/util.ts'
 import type {
   ActivityLogEntry,
   Analysis,
@@ -19,6 +20,7 @@ import type {
   EvidenceRepository,
   InvestigationQuery,
   InvestigationRepository,
+  QuotaReservationRepository,
   Repositories,
   ResearchQueryRepository,
   SettingsRepository,
@@ -858,27 +860,106 @@ class SqliteUserRepository implements UserRepository {
   }
 }
 
-/** URL normalisation used for duplicate detection. */
-export function normalizeUrl(raw: string): string {
-  try {
-    const url = new URL(raw)
-    url.hash = ''
-    const trackingParams = [
-      'utm_source',
-      'utm_medium',
-      'utm_campaign',
-      'utm_term',
-      'utm_content',
-      'gclid',
-      'fbclid',
-      'ref',
-    ]
-    for (const param of trackingParams) url.searchParams.delete(param)
-    const path = url.pathname.replace(/\/+$/, '') || '/'
-    return `${url.protocol}//${url.host.toLowerCase()}${path}${url.search}`
-  } catch {
-    return raw.trim().toLowerCase()
+/**
+ * URL normalisation used for duplicate detection.
+ *
+ * Re-exported from `server/lib/util.ts`, where it now lives. The function is
+ * pure, but this module imports `node:sqlite` at module scope, so any module
+ * that imported `normalizeUrl` from here inherited the Node-only runtime and
+ * could not be bundled for the Worker. Consumers that run on the platform
+ * import it from `../lib/util.ts`; this alias remains for the SQLite-side
+ * callers and the parity tests, which are Node-only by design.
+ */
+export { normalizeUrl } from '../lib/util.ts'
+
+/**
+ * Reservation repository over SQLite.
+ *
+ * The `UNIQUE (owner_id, operation)` index does the work: `INSERT` either lands
+ * or violates the constraint, with no window between check and write. That is
+ * the same guarantee the RecordRoom's `uniqueOn` provides, so a test against
+ * this adapter proves the contract the other one must also satisfy.
+ */
+class SqliteQuotaReservationRepository implements QuotaReservationRepository {
+  constructor(private readonly db: Database) {}
+
+  async acquire(input: {
+    ownerId: string
+    operation: string
+    token: string
+    expiresAt: number
+    createdAt: string
+  }): Promise<{ token: string; recordId: string } | null> {
+    const recordId = createRecordId()
+
+    try {
+      run(
+        this.db,
+        `INSERT INTO quota_reservations (id, owner_id, operation, token, expires_at, created_at)
+         VALUES (?, ?, ?, ?, ?, ?)`,
+        [recordId, input.ownerId, input.operation, input.token, input.expiresAt, input.createdAt],
+      )
+      return { token: input.token, recordId }
+    } catch (error) {
+      if (!isUniqueViolation(error)) throw error
+    }
+
+    // A live reservation blocked the insert. Reclaim it only if it has expired;
+    // doing this as a conditional DELETE + retry keeps the decision at the
+    // storage layer instead of trusting a clock read taken elsewhere.
+    const reclaimed = run(
+      this.db,
+      `DELETE FROM quota_reservations
+        WHERE owner_id = ? AND operation = ? AND expires_at <= ?`,
+      [input.ownerId, input.operation, Date.now()],
+    )
+    void reclaimed
+
+    try {
+      run(
+        this.db,
+        `INSERT INTO quota_reservations (id, owner_id, operation, token, expires_at, created_at)
+         VALUES (?, ?, ?, ?, ?, ?)`,
+        [recordId, input.ownerId, input.operation, input.token, input.expiresAt, input.createdAt],
+      )
+      return { token: input.token, recordId }
+    } catch (error) {
+      if (isUniqueViolation(error)) return null
+      throw error
+    }
   }
+
+  async release(input: { ownerId: string; operation: string; token: string }): Promise<boolean> {
+    const existing = get<{ id: string }>(
+      this.db,
+      `SELECT id FROM quota_reservations WHERE owner_id = ? AND operation = ? AND token = ?`,
+      [input.ownerId, input.operation, input.token],
+    )
+    if (!existing) return false
+    run(this.db, `DELETE FROM quota_reservations WHERE id = ?`, [existing.id])
+    return true
+  }
+
+  async purgeExpired(now: number): Promise<number> {
+    const rows = all<{ id: string }>(
+      this.db,
+      `SELECT id FROM quota_reservations WHERE expires_at <= ?`,
+      [now],
+    )
+    if (rows.length === 0) return 0
+    run(this.db, `DELETE FROM quota_reservations WHERE expires_at <= ?`, [now])
+    return rows.length
+  }
+}
+
+/** SQLite reports a unique-constraint failure as SQLITE_CONSTRAINT_UNIQUE. */
+function isUniqueViolation(error: unknown): boolean {
+  const message = error instanceof Error ? error.message : String(error)
+  return /UNIQUE constraint failed|SQLITE_CONSTRAINT/i.test(message)
+}
+
+function createRecordId(): string {
+  return `res_${Date.now().toString(36)}${Math.random().toString(36).slice(2, 10)}`
 }
 
 export function createSqliteRepositories(db: Database): Repositories {
@@ -893,5 +974,6 @@ export function createSqliteRepositories(db: Database): Repositories {
     researchQueries: new SqliteResearchQueryRepository(db),
     settings: new SqliteSettingsRepository(db),
     users: new SqliteUserRepository(db),
+    reservations: new SqliteQuotaReservationRepository(db),
   }
 }

@@ -1,55 +1,96 @@
 @import 'tailwindcss';
 
 /* ==========================================================================
-   SIGNALMESH design tokens
+   SIGNALMESH design system
    --------------------------------------------------------------------------
-   A graphite/indigo surface with restrained aurora light. Colour is used for
-   meaning (state, signal, hierarchy) — not decoration. Every text/background
-   pair below was chosen to clear WCAG AA at its size class.
+   An obsidian instrument surface. Three ideas drive the visual language:
+
+   1. **Obsidian depth.** Surfaces stack from a near-black canvas through
+      graphite panels to a raised overlay. Depth is expressed by surface
+      *value* and a single hairline — not by heavy shadows or glows.
+   2. **Signal red as an instrument, not decoration.** Red marks the live
+      element (active nav, current state, a primary action) and nothing else.
+      It never colours body copy below 24px, because `#B64B50` measures 3.86:1
+      on the canvas — legal for large text, not for paragraphs.
+   3. **Editorial precision.** Mono type for labels, indices and figures;
+      sans for prose. The mono/sans pairing is what makes dense research data
+      read like a calibrated instrument rather than a generic dashboard.
+
+   Every text/background pair below was measured against WCAG AA for its size
+   class. The values are not decorative guesses — see the comments per tier.
    ========================================================================== */
 
 @theme {
   --font-sans: 'Inter Variable', ui-sans-serif, system-ui, -apple-system, 'Segoe UI', sans-serif;
   --font-mono: 'JetBrains Mono Variable', ui-monospace, 'SFMono-Regular', monospace;
 
-  /* Surfaces — from deepest canvas to floating overlay */
-  --color-canvas: #07090f;
-  --color-base: #0a0d16;
-  --color-surface: #0e121c;
-  --color-raised: #131826;
-  --color-overlay: #1a2031;
-  --color-hairline: #1e2536;
-  --color-hairline-strong: #2a3348;
+  /* --- Surfaces: deepest canvas → floating overlay ------------------------ */
+  --color-canvas: #090b0e; /* Obsidian */
+  --color-base: #0c0f14;
+  --color-surface: #151b23; /* Graphite */
+  --color-raised: #1b222c;
+  --color-overlay: #212933;
+  --color-hairline: #232b36;
+  --color-hairline-strong: #313b49;
 
-  /* Ink — every tier below clears WCAG AA (4.5:1) on the darkest surface,
-     and ink-faint also clears it on `raised` and `overlay`. */
-  --color-ink: #f2f5fb;
-  --color-ink-muted: #b3bdd1;
-  --color-ink-subtle: #9aa6bd;
-  --color-ink-faint: #818b9f;
+  /* --- Ink: every tier clears 4.5:1 on canvas, base and raised ----------- */
+  --color-ink: #ecf0f6; /* Silver — 17.2:1 on canvas */
+  --color-ink-muted: #aab4c2; /* 9.4:1 — secondary body */
+  --color-ink-subtle: #939ead; /* 7.3:1 — supporting copy */
+  --color-ink-faint: #8792a0; /* 5.1:1 on raised — meta/labels only */
 
-  /* Signal — the three accents that carry identity */
-  --color-signal: #5b8cff;
-  --color-signal-bright: #7ba4ff;
-  --color-violet: #8b7bff;
-  --color-cyan: #43d9d0;
+  /* --- Signal: the one accent that carries identity ---------------------- */
+  /* `signal` is a *surface* colour (fills, rules, the live marker). */
+  --color-signal: #b64b50; /* Signal Red — 5.11:1 with white text */
+  --color-signal-deep: #9e3e45; /* hover/active fill */
+  /* `signal-bright` is the same hue lifted to be legible *as text*. */
+  --color-signal-bright: #d97a7e; /* 5.80:1 on surface */
 
-  /* Semantic states */
-  --color-positive: #34d399;
-  --color-positive-dim: #0f3d31;
-  --color-caution: #f5b544;
-  --color-caution-dim: #3d2f10;
-  --color-negative: #f2678a;
-  --color-negative-dim: #3d1424;
+  /* --- Semantic states --------------------------------------------------- */
+  --color-positive: #3dd68c; /* 9.2:1 */
+  --color-positive-dim: #11342a;
+  --color-caution: #e5b454; /* 9.1:1 */
+  --color-caution-dim: #3a2e12;
+  --color-negative: #e88098; /* 6.6:1 */
+  --color-negative-dim: #3a1622;
 
-  --radius-xs: 4px;
-  --radius-sm: 6px;
-  --radius-md: 10px;
-  --radius-lg: 14px;
-  --radius-xl: 20px;
+  /* --- Investigation lifecycle -------------------------------------------
+     Four distinct hues so the stage of a research project can be read at a
+     glance rather than by reading the label. Each pair below is `-line` (the
+     dot / border, a solid hue) and a text tone.
 
-  --shadow-panel: 0 1px 0 0 rgba(255, 255, 255, 0.03) inset, 0 16px 40px -24px rgba(0, 0, 0, 0.9);
-  --shadow-lift: 0 24px 60px -32px rgba(0, 0, 0, 0.95), 0 1px 0 0 rgba(255, 255, 255, 0.04) inset;
+     The text tones are *not* always the exact hue that was specified: a badge
+     label is 12px, so it needs 4.5:1 against its own 10%-tinted background. The
+     specified `#477FC1` (steel blue) measures 3.74:1 there and would fail AA, so
+     the label uses a lifted `#6C99CD` (5.03:1) while the dot and border keep the
+     true `#477FC1` (4.18:1 on the panel — clear of the 3:1 non-text floor).
+     Same reasoning for `draft`, lifted by one step for the raised surface.
+
+     Colour is never the only differentiator: every badge keeps its dot *and*
+     its label ("Rascunho", "Em andamento", …). */
+  --color-status-draft: #8f96a1; /* lifted from #858D99 for AA on raised */
+  --color-status-draft-line: #858d99;
+  --color-status-active: #d6a448; /* amber — 6.46:1 */
+  --color-status-active-line: #d6a448;
+  --color-status-completed: #36a879; /* green — 5.05:1 */
+  --color-status-completed-line: #36a879;
+  --color-status-archived: #6c99cd; /* lifted from #477FC1 for AA */
+  --color-status-archived-line: #477fc1;
+
+  /* --- Radii ------------------------------------------------------------ */
+  --radius-xs: 3px;
+  --radius-sm: 5px;
+  --radius-md: 8px;
+  --radius-lg: 12px;
+  --radius-xl: 16px;
+
+  /* --- Elevation: restrained, value-led --------------------------------- */
+  --shadow-panel: 0 1px 0 0 rgba(255, 255, 255, 0.022) inset, 0 12px 28px -22px rgba(0, 0, 0, 0.95);
+  --shadow-lift: 0 1px 0 0 rgba(255, 255, 255, 0.045) inset, 0 28px 64px -32px rgba(0, 0, 0, 0.98);
+
+  /* Type scale used by the page header and section rhythm. */
+  --text-display: 1.75rem;
+  --text-display--line-height: 1.15;
 }
 
 /* --------------------------------------------------------------------------
@@ -66,6 +107,7 @@
   html {
     color-scheme: dark;
     -webkit-text-size-adjust: 100%;
+    scroll-behavior: smooth;
   }
 
   body {
@@ -80,8 +122,8 @@
     text-rendering: optimizeLegibility;
   }
 
-  /* A single, very restrained aurora: two soft radial washes, fixed, that sit
-     under the content and never compete with it. */
+  /* A single directional wash from the top-left: it reads as light falling on
+     a dark instrument panel, and never competes with content. */
   body::before {
     content: '';
     position: fixed;
@@ -89,8 +131,19 @@
     pointer-events: none;
     z-index: 0;
     background:
-      radial-gradient(58rem 30rem at 12% -8%, rgba(91, 140, 255, 0.11), transparent 68%),
-      radial-gradient(44rem 26rem at 92% 4%, rgba(139, 123, 255, 0.09), transparent 70%);
+      radial-gradient(64rem 32rem at 8% -12%, rgba(182, 75, 80, 0.05), transparent 62%),
+      radial-gradient(50rem 28rem at 88% -6%, rgba(120, 140, 170, 0.045), transparent 66%);
+  }
+
+  /* A very fine grain keeps large flat areas from banding on wide displays. */
+  body::after {
+    content: '';
+    position: fixed;
+    inset: 0;
+    pointer-events: none;
+    z-index: 0;
+    opacity: 0.018;
+    background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='140' height='140'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.85' numOctaves='3'/%3E%3C/filter%3E%3Crect width='140' height='140' filter='url(%23n)'/%3E%3C/svg%3E");
   }
 
   h1,
@@ -98,7 +151,7 @@
   h3,
   h4 {
     font-weight: 600;
-    letter-spacing: -0.018em;
+    letter-spacing: -0.02em;
     text-wrap: balance;
   }
 
@@ -107,7 +160,7 @@
   }
 
   ::selection {
-    background: rgba(91, 140, 255, 0.28);
+    background: rgba(182, 75, 80, 0.32);
     color: #ffffff;
   }
 
@@ -120,20 +173,20 @@
   /* Scrollbars: present but quiet. */
   * {
     scrollbar-width: thin;
-    scrollbar-color: #2b3448 transparent;
+    scrollbar-color: #2b3441 transparent;
   }
   *::-webkit-scrollbar {
     width: 10px;
     height: 10px;
   }
   *::-webkit-scrollbar-thumb {
-    background: #2b3448;
+    background: #2b3441;
     border-radius: 999px;
     border: 3px solid transparent;
     background-clip: content-box;
   }
   *::-webkit-scrollbar-thumb:hover {
-    background: #3a4560;
+    background: #3a4553;
     background-clip: content-box;
   }
 
@@ -147,6 +200,98 @@
       scroll-behavior: auto !important;
     }
   }
+
+  /* ------------------------------------------------------------------------
+     Pointer affordance
+     ------------------------------------------------------------------------
+     The browser default for `<button>` is `cursor: default`, not `pointer`, so
+     every button in the app showed an arrow over a clickable control while
+     links showed a hand — the inconsistency this layer removes.
+
+     The rules are declared once, here, and keyed on *role* rather than on
+     component classes: any element that is a control gets the hand, whatever
+     generated it. Ordering matters, so read top to bottom:
+
+       1. controls that act            → pointer
+       2. controls that cannot act     → not-allowed
+       3. text entry                   → text (keeps native caret behaviour)
+       4. inert / purely informational → never pointer
+
+     `[role=…]` selectors are included because several primitives are custom
+     elements (tabs, option lists) that carry ARIA roles instead of a native
+     tag. This adds no focus, ARIA or handler behaviour — only the cursor.
+     ------------------------------------------------------------------------ */
+
+  /* 1. Anything that performs an action. */
+  a[href],
+  button,
+  summary,
+  [role='button'],
+  [role='tab'],
+  [role='menuitem'],
+  [role='menuitemcheckbox'],
+  [role='menuitemradio'],
+  [role='option'],
+  [role='switch'],
+  [role='checkbox'],
+  [role='radio'],
+  [role='link'],
+  select,
+  input[type='checkbox'],
+  input[type='radio'],
+  input[type='file'],
+  input[type='submit'],
+  input[type='reset'],
+  input[type='button'],
+  label[for],
+  /* Labels that wrap a control make the whole label clickable. */
+  label:has(input),
+  label:has(select),
+  label:has(textarea) {
+    cursor: pointer;
+  }
+
+  /* 2. Disabled controls keep a truthful affordance: the action is unavailable,
+        so the cursor says so rather than inviting a click that will not work.
+        `aria-disabled` is covered because custom controls report state that way. */
+  button:disabled,
+  button[aria-disabled='true'],
+  [role='button'][aria-disabled='true'],
+  [role='tab'][aria-disabled='true'],
+  [aria-disabled='true'],
+  select:disabled,
+  input:disabled,
+  textarea:disabled,
+  input[type='checkbox']:disabled,
+  input[type='radio']:disabled,
+  input[type='file']:disabled,
+  label:has(input:disabled),
+  label:has(select:disabled),
+  label:has(textarea:disabled) {
+    cursor: not-allowed;
+  }
+
+  /* 3. Text entry keeps the I-beam. Declared after the control rules so a
+        disabled field still resolves to `not-allowed` above. */
+  input:not(:disabled):not([type='checkbox']):not([type='radio']):not([type='file']):not([type='submit']):not([type='reset']):not([type='button']),
+  textarea:not(:disabled),
+  [contenteditable='true']:not([aria-disabled='true']) {
+    cursor: text;
+  }
+
+  /* 4. Informational surfaces must not advertise an action. `cursor: auto`
+        restores the native default (arrow over text, I-beam over prose). */
+  [role='tooltip'],
+  [role='status'],
+  [role='alert'],
+  [role='progressbar'],
+  [role='img'],
+  [role='presentation'],
+  [role='none'],
+  abbr[title]:not([role='button']) {
+    cursor: auto;
+  }
+
 }
 
 /* --------------------------------------------------------------------------
@@ -154,41 +299,88 @@
    -------------------------------------------------------------------------- */
 
 @layer components {
+  /* --- Instrument typography --------------------------------------------- */
+
   /* Numeric readouts: tabular so columns of figures align. */
   .tnum {
     font-variant-numeric: tabular-nums;
     font-feature-settings: 'tnum';
   }
 
-  /* Eyebrow labels above sections. */
+  /* Section eyebrow: mono, tracked out, quiet. The mono voice is what
+     separates SIGNALMESH from a generic dashboard. */
   .eyebrow {
-    font-size: 0.75rem;
-    font-weight: 600;
-    letter-spacing: 0.12em;
+    font-family: var(--font-mono);
+    font-size: 0.6875rem;
+    font-weight: 500;
+    letter-spacing: 0.14em;
     text-transform: uppercase;
-    color: var(--color-ink-subtle);
+    color: var(--color-ink-faint);
   }
+
+  /* Metric label above a figure. */
+  .meta-label {
+    font-family: var(--font-mono);
+    font-size: 0.6875rem;
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+    color: var(--color-ink-faint);
+    font-weight: 500;
+  }
+
+  /* Monospaced figure for stats and table numbers. */
+  .figure {
+    font-family: var(--font-mono);
+    font-variant-numeric: tabular-nums;
+    letter-spacing: -0.02em;
+    font-weight: 500;
+  }
+
+  /* --- Structure ---------------------------------------------------------- */
 
   /* A hairline that fades at both ends — used instead of a hard border. */
   .rule {
     height: 1px;
-    background: linear-gradient(90deg, transparent, var(--color-hairline) 12%, var(--color-hairline) 88%, transparent);
+    background: linear-gradient(
+      90deg,
+      transparent,
+      var(--color-hairline) 12%,
+      var(--color-hairline) 88%,
+      transparent
+    );
   }
 
+  /* The primary content surface. */
   .panel {
-    background: color-mix(in oklab, var(--color-surface) 92%, transparent);
+    background: color-mix(in oklab, var(--color-surface) 94%, transparent);
     border: 1px solid var(--color-hairline);
     border-radius: var(--radius-lg);
     box-shadow: var(--shadow-panel);
   }
 
-  /* The one gradient allowed to be prominent: the brand mark. */
+  /* A panel that needs to sit above another (drawers, nested cards). */
+  .panel-raised {
+    background: color-mix(in oklab, var(--color-raised) 96%, transparent);
+    border: 1px solid var(--color-hairline-strong);
+    border-radius: var(--radius-lg);
+    box-shadow: var(--shadow-lift);
+  }
+
+  /* Section container: the vertical rhythm every page shares. */
+  .section {
+    display: flex;
+    flex-direction: column;
+    gap: 0.875rem;
+  }
+
+  /* --- Brand -------------------------------------------------------------- */
+
   .brand-gradient {
-    background-image: linear-gradient(115deg, #7ba4ff 0%, #8b7bff 48%, #43d9d0 100%);
+    background-image: linear-gradient(115deg, #e08a8e 0%, #b64b50 52%, #8a3c42 100%);
   }
 
   .text-gradient {
-    background-image: linear-gradient(100deg, #ffffff 8%, #b9c6e6 55%, #8f9dc0 100%);
+    background-image: linear-gradient(100deg, #ffffff 8%, #c3cbd8 55%, #98a3b2 100%);
     -webkit-background-clip: text;
     background-clip: text;
     color: transparent;
@@ -197,30 +389,24 @@
   /* Grid paper used behind the landing hero. */
   .grid-fade {
     background-image:
-      linear-gradient(to right, rgba(255, 255, 255, 0.045) 1px, transparent 1px),
-      linear-gradient(to bottom, rgba(255, 255, 255, 0.045) 1px, transparent 1px);
-    background-size: 56px 56px;
+      linear-gradient(to right, rgba(255, 255, 255, 0.035) 1px, transparent 1px),
+      linear-gradient(to bottom, rgba(255, 255, 255, 0.035) 1px, transparent 1px);
+    background-size: 64px 64px;
     mask-image: radial-gradient(ellipse 80% 60% at 50% 0%, #000 20%, transparent 78%);
   }
 
+  /* --- States ------------------------------------------------------------- */
+
   .skeleton {
-    background: linear-gradient(90deg, #141a27 25%, #1b2233 37%, #141a27 63%);
+    background: linear-gradient(90deg, #161c25 25%, #1e2530 37%, #161c25 63%);
     background-size: 400% 100%;
-    animation: skeleton-sweep 1.5s ease-in-out infinite;
+    animation: skeleton-sweep 1.6s ease-in-out infinite;
     border-radius: var(--radius-sm);
   }
 
+  /* The single allowed glow: focus/hover on a live control. */
   .ring-signal {
-    box-shadow: 0 0 0 1px rgba(91, 140, 255, 0.35), 0 0 32px -12px rgba(91, 140, 255, 0.7);
-  }
-
-  /* Very small caps meta text for dense table rows. */
-  .meta-label {
-    font-size: 0.75rem;
-    letter-spacing: 0.06em;
-    text-transform: uppercase;
-    color: var(--color-ink-faint);
-    font-weight: 500;
+    box-shadow: 0 0 0 1px rgba(182, 75, 80, 0.4), 0 0 28px -12px rgba(182, 75, 80, 0.65);
   }
 }
 
@@ -240,6 +426,11 @@
   .no-scrollbar {
     -ms-overflow-style: none;
     scrollbar-width: none;
+  }
+  /* Vertical text used by the desktop rail dividers. */
+  .vertical-label {
+    writing-mode: vertical-rl;
+    text-orientation: mixed;
   }
 }
 

@@ -10,6 +10,7 @@ import {
 import type { SessionUser } from '@shared/api'
 import type { AuthConfigResponse } from '../../server/lib/auth-context'
 import { api, ApiError } from '@/lib/api'
+import { useI18n } from '@/i18n/I18nProvider'
 
 /**
  * Session context.
@@ -44,11 +45,14 @@ interface AuthState {
 const AuthContext = createContext<AuthState | null>(null)
 
 export function AuthProvider({ children }: { children: ReactNode }) {
+  const { t } = useI18n()
   const [status, setStatus] = useState<AuthState['status']>('loading')
   const [user, setUser] = useState<SessionUser | null>(null)
   const [error, setError] = useState<string | null>(null)
   const [mode, setMode] = useState<AuthState['mode']>(null)
-  const [providerLabel, setProviderLabel] = useState('Autenticação')
+  // Replaced by the adapter's own label once `/api/auth/config` responds; this is
+  // only the pre-fetch fallback.
+  const [providerLabel, setProviderLabel] = useState(() => t('login.providerFallback'))
 
   const refresh = useCallback(async () => {
     try {
@@ -65,9 +69,9 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       }
       setUser(null)
       setStatus('anonymous')
-      setError(caught instanceof Error ? caught.message : 'Falha ao verificar a sessão')
+      setError(caught instanceof Error ? caught.message : t('login.sessionCheckError'))
     }
-  }, [])
+  }, [t])
 
   useEffect(() => {
     let active = true

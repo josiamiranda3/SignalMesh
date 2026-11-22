@@ -133,6 +133,8 @@ async function main(): Promise<void> {
       APP_ORIGIN: base,
       SESSION_SECRET: 'e2e-secret-value-long-enough-for-production-123456',
       ENABLE_EXTERNAL_APIS: 'true',
+      // Simulated providers only; since v0.2.4.3 a paid operation needs this on.
+      ENABLE_PAID_OPERATIONS: 'true',
       EXA_API_KEY: 'e2e-exa-key',
       EXA_BASE_URL: `http://127.0.0.1:${providerPort}`,
       GEMINI_API_KEY: 'e2e-gemini-key',

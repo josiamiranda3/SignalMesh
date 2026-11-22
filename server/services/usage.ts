@@ -21,9 +21,6 @@ import { createId, nextUtcMidnight, nowIso, startOfUtcDay } from '../lib/util.ts
  * so the operator can audit consumption after the fact.
  */
 export class UsageService {
-  /** userId → operation → promise of the in-flight operation token */
-  private readonly inFlight = new Map<string, string>()
-
   constructor(
     private readonly repos: Repositories,
     private readonly config: AppConfig,
@@ -60,9 +57,27 @@ export class UsageService {
   }
 
   /**
-   * Reserve capacity for an operation. Throws `quota_exceeded`,
-   * `external_disabled` or `rate_limited` when the request must not proceed.
+   * Reserve capacity for an operation. Throws `external_disabled`,
+   * `quota_exceeded` or `rate_limited` when the request must not proceed.
    * The returned token must be settled with `settle()`.
+   *
+   * ## The two gates, and why both run first
+   *
+   * `reserve()` is the only path through which Exa or Gemini can be reached:
+   * `research.ts` and `analysis.ts` both call it before their single outbound
+   * request. Putting the cost gates here — rather than in the providers or the
+   * routes — means a new caller cannot reach a paid provider by forgetting a
+   * check, and a blocked request consumes no quota because nothing has been
+   * counted or reserved yet.
+   *
+   *  - `ENABLE_EXTERNAL_APIS` — is any outbound call allowed at all?
+   *  - `ENABLE_PAID_OPERATIONS` — is a call that *may cost money* allowed?
+   *
+   * The second gate is not redundant. Until v0.2.4.3 it was an empty `if`, so
+   * `ENABLE_EXTERNAL_APIS=true` with `ENABLE_PAID_OPERATIONS=false` still issued
+   * billed requests — the opposite of what the switch name promises. Now that
+   * pair means "external reads allowed, spending not authorised", and every
+   * operation this app performs is billable at the provider.
    */
   async reserve(input: {
     ownerId: string
@@ -74,15 +89,14 @@ export class UsageService {
         'As chamadas externas estão desativadas globalmente (ENABLE_EXTERNAL_APIS=false).',
       )
     }
-    if (this.config.paidOperationsEnabled) {
-      // Paid mode is a deliberate owner decision; the free-tier path is the
-      // default. Nothing extra is required beyond the daily limits below.
-    }
 
-    const inFlightKey = `${input.ownerId}:${input.operation}`
-    if (this.inFlight.has(inFlightKey)) {
-      throw errors.rateLimited(
-        'Já existe uma operação deste tipo em andamento para este usuário. Aguarde a conclusão antes de iniciar outra.',
+    if (!this.config.paidOperationsEnabled) {
+      // Singular: `labelFor` returns the plural used by the quota messages
+      // ("limite de pesquisas"), which reads wrong in "A pesquisas não foi…".
+      const operation = input.operation === 'research' ? 'pesquisa' : 'análise'
+      throw errors.externalDisabled(
+        `Operações que podem gerar cobrança estão desabilitadas (ENABLE_PAID_OPERATIONS=false). ` +
+          `A ${operation} não foi executada e nenhuma cota foi consumida.`,
       )
     }
 
@@ -113,15 +127,60 @@ export class UsageService {
       )
     }
 
+    // Last step: take the exclusive slot.
+    //
+    // This runs after the counting checks so a refusal never leaves a
+    // reservation behind, and it is a single INSERT whose uniqueness is enforced
+    // by the storage (unique index / `uniqueOn`), not by a read-then-write check
+    // — the previous in-memory `Map` could not survive a per-request service
+    // instance and could not see another isolate's reservation.
     const token = createId('op')
-    this.inFlight.set(inFlightKey, token)
+    const reservation = await this.repos.reservations.acquire({
+      ownerId: input.ownerId,
+      operation: input.operation,
+      token,
+      expiresAt: Date.now() + this.reservationTtlMs(),
+      createdAt: nowIso(),
+    })
+    if (!reservation) {
+      throw errors.rateLimited(
+        'Já existe uma operação deste tipo em andamento para este usuário. Aguarde a conclusão antes de iniciar outra.',
+      )
+    }
+
     return { token }
   }
 
-  /** Release the in-flight slot without recording consumption (validation failure). */
-  release(input: { ownerId: string; operation: UsageOperation; token: string }): void {
-    const key = `${input.ownerId}:${input.operation}`
-    if (this.inFlight.get(key) === input.token) this.inFlight.delete(key)
+  /**
+   * How long a reservation may live before another request may reclaim it.
+   *
+   * Derived from the provider timeout with a margin, so a request that dies
+   * without releasing (isolate eviction, crash) does not lock the user out
+   * beyond the window in which it could plausibly still be running.
+   */
+  private reservationTtlMs(): number {
+    const providerTimeout =
+      Math.max(this.config.exaTimeoutMs, this.config.geminiTimeoutMs) || 60_000
+    return providerTimeout + 30_000
+  }
+
+  /**
+   * Release the reservation without recording consumption.
+   *
+   * Async because the slot now lives in storage. Called by `settle()` and by
+   * callers that abandon a reservation before contacting a provider.
+   */
+  async release(input: { ownerId: string; operation: UsageOperation; token: string }): Promise<void> {
+    try {
+      await this.repos.reservations.release({
+        ownerId: input.ownerId,
+        operation: input.operation,
+        token: input.token,
+      })
+    } catch {
+      // Releasing must never mask the error that caused it. An unreleased
+      // reservation expires on its own via `expiresAt`.
+    }
   }
 
   /** Release the slot and persist the outcome of the attempt. */
@@ -135,7 +194,7 @@ export class UsageService {
     errorCode?: string | null
     metadata?: Record<string, unknown>
   }): Promise<UsageRecord> {
-    this.release(input)
+    await this.release(input)
     const record: UsageRecord = {
       id: createId('use'),
       ownerId: input.ownerId,
