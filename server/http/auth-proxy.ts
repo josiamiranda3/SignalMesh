@@ -118,30 +118,57 @@ export function isSupportedSocialProvider(value: unknown): value is string {
 /**
  * `GET /api/auth/social-redirect?provider=<google|github>`
  *
- * ## The defect this fixes
+ * ## The defect this fixes (two rounds)
  *
- * The SDK's `AuthOverlay` starts a social sign-in with a **top-level browser
- * navigation** to `/api/auth/social-redirect?provider=…`
- * (`node_modules/deepspace/dist/index.js`, `handleSocial`), and the native web
- * client does the same. That path exists **only** in the SDK's browser code —
- * `deepspace/worker` and the platform auth worker do not implement it, so the
- * proxy faithfully forwarded it and the auth worker answered 404. Clicking
- * "Continue with Google" therefore dead-ended on a 404 page.
+ * **Round 1 (404).** The SDK's `AuthOverlay` starts a social sign-in with a
+ * top-level browser navigation to `/api/auth/social-redirect?provider=…`
+ * (`node_modules/deepspace/dist/index.js`, `handleSocial`). That path exists
+ * **only** in the SDK's browser code — `deepspace/worker` and the platform auth
+ * worker do not implement it — so the proxy forwarded it and the auth worker
+ * answered 404.
  *
- * The platform's real endpoint is `better-auth`'s `POST /api/auth/sign-in/social`,
- * which answers `{ url, redirect: true }` with the provider's authorize URL.
+ * **Round 2 (state_mismatch).** The first fix made this route call
+ * `POST https://auth.deep.space/api/auth/sign-in/social` server-to-server and
+ * redirect to the `url` it returned. That produced
+ * `/login/social/error?error=state_mismatch`, because the OAuth state lives in
+ * a **cookie the browser must hold**:
  *
- * ## What this route does, and deliberately does not do
+ *     set-cookie: __Secure-better-auth.state  Max-Age=300; Path=/; HttpOnly;
+ *                                            Secure; SameSite=None
  *
- * It is a **transport adapter**, not an auth implementation. It takes the
- * browser's GET navigation, calls the platform's POST, and redirects to the URL
- * the platform returned. It never builds an OAuth URL, never sees a client
- * secret, never reads or mints a token, and never decides who the user is. All
- * of that stays with the auth worker, exactly as before.
+ * The `__Secure-` prefix *forbids* a `Domain` attribute, so the cookie is
+ * host-only to `auth.deep.space`. A server-to-server fetch receives that
+ * `Set-Cookie` in a Response the browser never sees, and our origin
+ * (`signalmess.app.space`) is not allowed to set a cookie for another host.
+ * The state was created but never stored → the callback's state matched nothing.
  *
- * The callback stays on the platform (`redirect_uri` points at
- * `auth.deep.space/api/auth/callback/<provider>`, visible in the returned URL),
- * so `authorizedParties` and the JWT issuer are unchanged.
+ * ## The officially supported mechanism
+ *
+ * The auth worker serves a **browser-navigable** page that performs the same
+ * start *and* sets the state cookie on its own origin:
+ *
+ *     GET https://auth.deep.space/login/social?provider=google&returnTo=<app url>
+ *       → 302 to the provider's authorize URL
+ *       + set-cookie __Secure-better-auth.state   (host-only, secure)
+ *       + set-cookie social_csrf_<uuid>           (Path=/login/social/complete)
+ *
+ * This is the same construction the SDK's own native bridge uses
+ * (`nativeAuthStart` in `deepspace/worker`, which redirects to
+ * `${AUTH_WORKER_URL}/login/social?provider=…&returnTo=…`). It is verified live
+ * for both providers.
+ *
+ * So the route is now a **redirect, not a fetch**: the browser is sent to the
+ * auth worker's page, which mints and stores the state in the only place it can
+ * legally live. PKCE and state validation stay entirely on the platform — this
+ * route never sees, computes, or validates either.
+ *
+ * ## What this route still refuses to do
+ *
+ * It does not build an OAuth URL, does not touch a client secret, does not read
+ * or mint a token, does not set a cookie, and does not decide who the user is.
+ * `returnTo` is the app's **configured** origin plus a fixed path, never the
+ * request's Host and never a caller-supplied URL, so the route cannot become an
+ * open redirect.
  */
 export function createSocialRedirectRoutes(options: AuthProxyOptions = {}): Hono<AppEnv> {
   const app = new Hono<AppEnv>()
@@ -179,15 +206,13 @@ export function createSocialRedirectRoutes(options: AuthProxyOptions = {}): Hono
       )
     }
 
-    // Where the platform should send the browser after the provider handshake.
+    // Where the auth worker sends the browser after the provider handshake.
     //
-    // This must be the app's **configured** origin, not the request's Host:
-    //  - the auth worker validates `callbackURL` against its trusted origins and
-    //    returns 403 for an unknown one (verified live — this was the 502 the
-    //    first version of this bridge produced);
-    //  - a redirect target derived from the request would be caller-controlled.
-    // `appOrigin` comes from `loadConfig` (`APP_ORIGIN`), the same value that
-    // feeds `authorizedParties`.
+    // The **configured** origin, not the request's Host: deriving it from the
+    // request would make the return target caller-controlled, which is the open
+    // redirect this route must never become. `appOrigin` comes from
+    // `loadConfig` (`APP_ORIGIN`), the same value that feeds
+    // `authorizedParties`.
     const appOrigin = options.appOrigin
     if (!appOrigin) {
       return c.json(
@@ -202,118 +227,48 @@ export function createSocialRedirectRoutes(options: AuthProxyOptions = {}): Hono
         503,
       )
     }
-    const callbackURL = `${appOrigin.replace(/\/$/, '')}/dashboard`
 
-    let upstream: Response
+    // Only an https origin may be produced, so a misconfigured worker cannot
+    // send the browser to a plaintext or non-web scheme.
+    let workerOrigin: URL
     try {
-      upstream = await authWorkerFetch({ AUTH_WORKER_URL: authWorkerUrl }, '/api/auth/sign-in/social', {
-        method: 'POST',
-        headers: {
-          'content-type': 'application/json',
-          // The auth worker applies its own trustedOrigins check; the origin
-          // named here is the app's configured one.
-          origin: appOrigin,
-        },
-        body: JSON.stringify({ provider, callbackURL }),
-        // Redirects are the browser's job, not this route's.
-        redirect: 'manual',
-      })
+      workerOrigin = new URL(authWorkerUrl)
     } catch {
       return c.json(
         {
           success: false as const,
           error: {
-            code: 'provider_unavailable',
-            message: 'Não foi possível iniciar a autenticação social.',
-            retryable: true,
-          },
-        },
-        502,
-      )
-    }
-
-    if (!upstream.ok) {
-      return c.json(
-        {
-          success: false as const,
-          error: {
-            code: 'provider_unavailable',
-            message: 'Não foi possível iniciar a autenticação social.',
-            retryable: upstream.status >= 500,
-          },
-        },
-        502,
-      )
-    }
-
-    // `{ url, redirect: true }` is better-auth's contract for a social start.
-    let payload: unknown
-    try {
-      payload = await upstream.json()
-    } catch {
-      return c.json(
-        {
-          success: false as const,
-          error: {
-            code: 'invalid_provider_response',
-            message: 'Resposta inválida do provedor de autenticação.',
+            code: 'auth_unavailable',
+            message: 'AUTH_WORKER_URL inválido; autenticação social indisponível.',
             retryable: false,
           },
         },
-        502,
+        503,
       )
     }
-
-    const target = (payload as { url?: unknown } | null)?.url
-    if (typeof target !== 'string') {
+    if (workerOrigin.protocol !== 'https:') {
       return c.json(
         {
           success: false as const,
           error: {
-            code: 'invalid_provider_response',
-            message: 'Resposta inválida do provedor de autenticação.',
+            code: 'auth_unavailable',
+            message: 'AUTH_WORKER_URL deve usar https.',
             retryable: false,
           },
         },
-        502,
+        503,
       )
     }
 
-    // Only an absolute https URL may be followed. This is the one place a
-    // redirect target is decided by an upstream response, so it is validated
-    // rather than trusted: a misconfigured worker must not turn this route into
-    // an open redirect.
-    let destination: URL
-    try {
-      destination = new URL(target)
-    } catch {
-      return c.json(
-        {
-          success: false as const,
-          error: {
-            code: 'invalid_provider_response',
-            message: 'Resposta inválida do provedor de autenticação.',
-            retryable: false,
-          },
-        },
-        502,
-      )
-    }
-    if (destination.protocol !== 'https:') {
-      return c.json(
-        {
-          success: false as const,
-          error: {
-            code: 'invalid_provider_response',
-            message: 'Resposta inválida do provedor de autenticação.',
-            retryable: false,
-          },
-        },
-        502,
-      )
-    }
+    const start = new URL('/login/social', workerOrigin)
+    start.searchParams.set('provider', provider)
+    // The auth worker validates this against its own trusted origins; it is the
+    // app's configured origin plus a fixed path, never caller input.
+    start.searchParams.set('returnTo', `${appOrigin.replace(/\/$/, '')}/dashboard`)
 
-    return c.redirect(destination.toString(), 302)
+    // A plain 302: the browser must perform this navigation so the auth worker's
+    // Set-Cookie lands on *its* origin.
+    return c.redirect(start.toString(), 302)
   })
 
   return app

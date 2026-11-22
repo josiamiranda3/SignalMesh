@@ -282,8 +282,13 @@ async function main(): Promise<void> {
   rmSync(ARTIFACTS, { recursive: true, force: true })
   mkdirSync(ARTIFACTS, { recursive: true })
 
-  if (!existsSync(join(process.cwd(), 'dist', 'index.html'))) {
-    console.error('dist/index.html ausente — execute `npm run build` primeiro.')
+  // The build output directory depends on registration: an unregistered app
+  // builds to `dist/`, a registered one to `dist/client/` + `dist/server/`
+  // (what the platform deploy expects). Either is a valid build.
+  const hasClientBuild = existsSync(join(process.cwd(), 'dist', 'client', 'index.html'))
+  const hasPlainBuild = existsSync(join(process.cwd(), 'dist', 'index.html'))
+  if (!hasClientBuild && !hasPlainBuild) {
+    console.error('dist/client/index.html (ou dist/index.html) ausente — execute `npm run build` primeiro.')
     process.exit(2)
   }
   if (!existsSync(join(process.cwd(), 'node_modules', 'wrangler'))) {
