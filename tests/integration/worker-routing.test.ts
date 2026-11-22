@@ -37,6 +37,59 @@ describe('wrangler routing configuration', () => {
     assert.match(toml, /not_found_handling\s*=\s*"none"/)
   })
 
+  /**
+   * The SPA deep-link regression.
+   *
+   * `worker.ts` does `const asset = await env.ASSETS.fetch(request)` and returns
+   * anything that is not a 404. Cloudflare's default `html_handling`
+   * (`auto-trailing-slash`) turns a navigation for a path with no matching file
+   * into `/index.html`, canonicalised to `/` with a **307**. That 307 satisfied
+   * `!== 404`, so it was handed to the browser verbatim and the Worker's own SPA
+   * fallback never ran: `/login`, `/history`, `/settings` all landed on `/`.
+   *
+   * `html_handling = "none"` makes the asset layer answer a real 404, which is
+   * what the fallback expects.
+   */
+  it('sets html_handling = "none" so deep links are not 307-redirected by the asset layer', () => {
+    assert.match(
+      toml,
+      /html_handling\s*=\s*"none"/,
+      'without html_handling = "none" the asset layer answers a 307 for unknown paths',
+    )
+  })
+
+  it('keeps every other [assets] setting intact', () => {
+    // This change adds one key; it must not drop or alter the rest.
+    assert.match(toml, /directory\s*=\s*"dist"/)
+    assert.match(toml, /binding\s*=\s*"ASSETS"/)
+    assert.match(toml, /not_found_handling\s*=\s*"none"/)
+    assert.match(toml, /run_worker_first\s*=\s*\[/)
+  })
+
+  it('declares html_handling inside the [assets] block, not elsewhere', () => {
+    const lines = toml.split('\n')
+    const assetsAt = lines.findIndex((l) => l.trim() === '[assets]')
+    assert.ok(assetsAt >= 0, '[assets] section not found')
+
+    // Find the next section header after [assets]; the key must sit before it.
+    const nextSection = lines.findIndex((l, i) => i > assetsAt && /^\s*\[/.test(l))
+    const end = nextSection === -1 ? lines.length : nextSection
+
+    const keyLine = lines.findIndex((l, i) => i > assetsAt && i < end && /^\s*html_handling\s*=/.test(l))
+    assert.ok(keyLine > assetsAt && keyLine < end, 'html_handling must be declared inside [assets]')
+  })
+
+  it('uses a value wrangler accepts', () => {
+    // wrangler's schema: auto-trailing-slash | force-trailing-slash |
+    // drop-trailing-slash | none
+    const match = /html_handling\s*=\s*"([^"]+)"/.exec(toml)
+    assert.ok(match, 'html_handling not found')
+    assert.ok(
+      ['auto-trailing-slash', 'force-trailing-slash', 'drop-trailing-slash', 'none'].includes(match[1]!),
+      `unsupported html_handling: ${match[1]}`,
+    )
+  })
+
   it('routes API and socket prefixes to the worker before the asset layer', () => {
     assert.match(toml, /run_worker_first\s*=\s*\[/)
     const line = toml.split('\n').find((l) => l.includes('run_worker_first')) ?? ''
@@ -92,10 +145,32 @@ describe('worker fetch routing branches', () => {
  * the shell. It is a re-implementation, so it does not prove `worker.ts` is
  * correct — it proves the *rule* is correct, and the source assertions above
  * tie the rule to the code.
+ *
+ * `assetMode` models the two `html_handling` configurations, because that is
+ * exactly what this fix changes:
+ *
+ *  - `none`  — an unknown path answers **404**, so the Worker's fallback runs.
+ *  - `auto`  — Cloudflare's default: an unknown *navigation* is rewritten to
+ *              `/index.html` and canonicalised to `/` with a **307**. The Worker's
+ *              `!== 404` guard passes that through, so the fallback never runs.
  */
-function decide(pathname: string, assets: Map<string, string>): { status: number; body: string; shell: boolean } {
+function decide(
+  pathname: string,
+  assets: Map<string, string>,
+  assetMode: 'none' | 'auto' = 'none',
+): { status: number; body: string; shell: boolean; redirected?: string } {
   const hit = assets.get(pathname)
   if (hit !== undefined) return { status: 200, body: hit, shell: false }
+
+  // The asset layer's own normalisation, before the Worker's logic sees anything.
+  if (assetMode === 'auto') {
+    const last = pathname.slice(pathname.lastIndexOf('/') + 1)
+    // A file-like path still 404s; a route-like path is redirected to `/`.
+    if (!last.includes('.')) {
+      return { status: 307, body: '', shell: false, redirected: '/' }
+    }
+    return { status: 404, body: JSON.stringify({ error: 'not_found' }), shell: false }
+  }
 
   const last = pathname.slice(pathname.lastIndexOf('/') + 1)
   if (last.includes('.')) {
@@ -152,5 +227,71 @@ describe('SPA fallback rule (executed against a fake ASSETS binding)', () => {
   it('does not treat a route with a dot in a segment as a file when it has none in the last segment', () => {
     // `/v1.2/investigations` — dot in an earlier segment, clean last segment.
     assert.equal(decide('/v1.2/investigations', assets).shell, true)
+  })
+})
+
+/**
+ * Regression: the deep-link 307.
+ *
+ * This is the test that would have caught the production defect. With the
+ * Cloudflare default (`auto`), the asset layer answers **307 → /** for an
+ * unknown route, and the Worker's `!== 404` guard passes it straight through. The
+ * SPA shell is therefore never served on a hard load, and the user lands on the
+ * landing page instead of the requested route.
+ */
+describe('deep links are not 307-redirected (html_handling = "none")', () => {
+  const assets = new Map<string, string>([
+    ['/index.html', '<!doctype html><title>SignalMesh</title>'],
+    ['/assets/app.js', 'console.log(1)'],
+  ])
+
+  const ROUTES = ['/login', '/history', '/settings', '/dashboard', '/investigations', '/validation']
+
+  it('every SPA route is served the shell, not a redirect', () => {
+    for (const route of ROUTES) {
+      const result = decide(route, assets, 'none')
+      assert.equal(result.status, 200, `${route} must be served, not redirected`)
+      assert.equal(result.shell, true, `${route} must get the SPA shell`)
+      assert.equal(result.redirected, undefined, `${route} must not redirect`)
+    }
+  })
+
+  it('the previous configuration would have redirected them (documents the defect)', () => {
+    // With `auto` (the old behaviour) the same routes 307 to `/`. Asserted so the
+    // regression is recorded, not merely described.
+    for (const route of ROUTES) {
+      const result = decide(route, assets, 'auto')
+      assert.equal(result.status, 307, `${route} would have been redirected under auto-trailing-slash`)
+      assert.equal(result.redirected, '/', `${route} would have been redirected to /`)
+      assert.equal(result.shell, false)
+    }
+  })
+
+  it('static files are still served unchanged in both modes', () => {
+    for (const mode of ['none', 'auto'] as const) {
+      const result = decide('/assets/app.js', assets, mode)
+      assert.equal(result.status, 200, mode)
+      assert.equal(result.body, 'console.log(1)', mode)
+      assert.equal(result.shell, false, mode)
+    }
+  })
+
+  it('a missing asset still 404s in both modes', () => {
+    for (const mode of ['none', 'auto'] as const) {
+      const result = decide('/assets/deleted-chunk-abc.js', assets, mode)
+      assert.equal(result.status, 404, mode)
+      assert.notEqual(result.status, 307, `${mode}: a missing file must not redirect`)
+    }
+  })
+
+  it('the Worker never forwards a 307 for a route-shaped path', () => {
+    // The guard under test: `if (asset.status !== 404) return asset`.
+    // A 307 is "not 404", so it would be forwarded. `html_handling = "none"` is
+    // what prevents the asset layer from producing one in the first place.
+    const forwarded = decide('/login', assets, 'auto')
+    assert.equal(forwarded.status, 307, 'auto mode produces a 307 that the Worker forwards')
+
+    const fixed = decide('/login', assets, 'none')
+    assert.equal(fixed.status, 200, 'none mode produces a 404 the Worker turns into the shell')
   })
 })

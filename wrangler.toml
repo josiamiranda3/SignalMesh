@@ -11,6 +11,19 @@ binding = "ASSETS"
 # that no longer exists. Keeping this equal to the deploy value is what makes
 # `deepspace dev start` route like production.
 not_found_handling = "none"
+# Turn off the asset layer's own URL normalisation.
+#
+# The default (`auto-trailing-slash`) rewrites a navigation for a path that has no
+# matching file into `/index.html`, which Cloudflare then canonicalises to `/` with
+# a **307**. `worker.ts` calls `env.ASSETS.fetch(request)` and returns anything that
+# is not a 404, so that 307 was handed straight to the browser and the Worker's own
+# SPA fallback never ran — every deep link (`/login`, `/history`, `/settings`) landed
+# on the landing page instead of the route the user asked for.
+#
+# `none` makes the asset layer answer a real 404 for an unknown path, which is what
+# the Worker's fallback already expects and what the `not_found_handling` comment
+# above describes.
+html_handling = "none"
 # API and platform prefixes must reach the worker before the asset layer, or an
 # unmatched /api/* call answers with the SPA shell and a JSON client chokes.
 run_worker_first = ["/api/*", "/ws/*", "/internal/*", "/v1/*", "/_deepspace/*", "/llms.txt", "/llms-full.txt", "/.well-known/mcp", "/.well-known/mcp.json", "/.well-known/mcp/*"]
