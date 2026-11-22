@@ -1,4 +1,5 @@
 import type { ApiErrorPayload, ApiResponse } from '@shared/api'
+import { bearerFor } from './bearer.ts'
 
 /**
  * Typed API client.
@@ -51,7 +52,7 @@ export class ApiError extends Error {
   }
 }
 
-import { fieldErrorKey } from './field-errors'
+import { fieldErrorKey } from './field-errors.ts'
 
 /**
  * Collapse zod issue paths onto the keys a form actually reads.
@@ -61,11 +62,33 @@ import { fieldErrorKey } from './field-errors'
  */
 export { fieldErrorKey }
 
+/**
+ * Bearer token source.
+ *
+ * The credential logic lives in `./bearer` so it stays DOM-free and can be
+ * exercised by server-side tests; this module re-exports it for callers that
+ * already import from the API client.
+ */
+export {
+  bearerFor,
+  isTokenExempt,
+  resetTokenProviderState,
+  setTokenProvider,
+  type TokenProvider,
+} from './bearer.ts'
+
 interface RequestOptions {
   method?: 'GET' | 'POST' | 'PATCH' | 'DELETE'
   body?: unknown
   query?: Record<string, string | number | boolean | undefined | null>
   signal?: AbortSignal
+  /**
+   * Skip the bearer for this request.
+   *
+   * Used where a stale token must not shadow a fresh cookie: `/api/auth/me`
+   * after a sign-out, and the logout call itself.
+   */
+  anonymous?: boolean
 }
 
 function buildUrl(path: string, query?: RequestOptions['query']): string {
@@ -85,6 +108,14 @@ async function request<T>(path: string, options: RequestOptions = {}): Promise<T
     'x-signalmess-request': '1',
   }
   if (options.body !== undefined) headers['content-type'] = 'application/json'
+
+  // Explicit credential when one is available. `credentials: 'same-origin'`
+  // stays on every request regardless: the cookie is what the server uses to
+  // renew a session and what `/api/auth/token` consumes.
+  if (!options.anonymous) {
+    const bearer = await bearerFor(path)
+    if (bearer) headers['authorization'] = `Bearer ${bearer}`
+  }
 
   let response: Response
   try {
@@ -137,7 +168,17 @@ async function request<T>(path: string, options: RequestOptions = {}): Promise<T
 /** Authenticated JSON endpoints. */
 export const api = {
   get: <T>(path: string, query?: RequestOptions['query']) => request<T>(path, { query }),
+  /**
+   * GET without a bearer.
+   *
+   * For the endpoint that *decides* whether a session exists: sending a stale
+   * token there would report an identity the user has already signed out of.
+   */
+  getAnonymous: <T>(path: string) => request<T>(path, { anonymous: true }),
   post: <T>(path: string, body?: unknown) => request<T>(path, { method: 'POST', body: body ?? {} }),
+  /** POST without a bearer, for credential lifecycle calls (login, logout). */
+  postAnonymous: <T>(path: string, body?: unknown) =>
+    request<T>(path, { method: 'POST', body: body ?? {}, anonymous: true }),
   patch: <T>(path: string, body: unknown) => request<T>(path, { method: 'PATCH', body }),
   delete: <T>(path: string) => request<T>(path, { method: 'DELETE' }),
 }
@@ -147,8 +188,14 @@ export const api = {
  * surfaces API errors instead of saving an error page as a file.
  */
 export async function downloadFile(path: string, query?: RequestOptions['query']): Promise<string> {
+  // Exports are protected endpoints, so they need the same credential as any
+  // other API call.
+  const bearer = await bearerFor(path)
   const response = await fetch(buildUrl(path, query), {
-    headers: { 'x-signalmess-request': '1' },
+    headers: {
+      'x-signalmess-request': '1',
+      ...(bearer ? { authorization: `Bearer ${bearer}` } : {}),
+    },
     credentials: 'same-origin',
   })
 

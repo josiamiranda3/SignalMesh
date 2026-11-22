@@ -23,5 +23,14 @@
     }
   },
   "include": ["server", "shared", "worker", "tests", "shared"],
-  "exclude": ["node_modules", "dist"]
+  "exclude": [
+    "node_modules",
+    "dist",
+    // Browser-only test: it imports `src/lib/api.ts`, which touches `document`
+    // and `window` (it builds a download anchor). That module is not part of the
+    // Worker graph, and pulling a DOM lib into this config would hide real
+    // Node-only mistakes elsewhere. The credential logic it depends on lives in
+    // the DOM-free `src/lib/bearer.ts`, which *is* covered here.
+    "tests/unit/api-bearer.test.ts"
+  ]
 }
