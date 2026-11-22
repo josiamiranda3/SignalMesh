@@ -102,7 +102,6 @@ describe('CSRF scope: the SDK auth handshake reaches the proxy', () => {
     },
     { method: 'POST', path: '/api/auth/sign-out', label: 'signOut()' },
     { method: 'GET', path: '/api/auth/session', label: 'useSession' },
-    { method: 'GET', path: '/api/auth/social-redirect?provider=github', label: 'OAuth start' },
     { method: 'GET', path: '/api/auth/oauth-complete?code=abc', label: 'OAuth callback' },
   ]
 
@@ -143,6 +142,29 @@ describe('CSRF scope: the SDK auth handshake reaches the proxy', () => {
     assert.equal(response.status, 200)
     const body = (await response.json()) as { token?: string }
     assert.equal(body.token, 'platform.jwt.value')
+  })
+
+  it('social-redirect is app-owned: it starts the flow instead of being proxied', async () => {
+    // Removed from SDK_REQUESTS in v0.2.5. The SDK navigates the browser to this
+    // path for "Continue with Google/GitHub", but the platform never implemented
+    // it — proxying it produced the production 404. The app now answers it by
+    // calling `/sign-in/social` and redirecting, so it must NOT be forwarded.
+    const app = createDeepSpaceApp()
+    upstreamCalls.length = 0
+
+    const response = await app.request('/api/auth/social-redirect?provider=google', {
+      method: 'GET',
+      headers: { cookie: '__Secure-better-auth.session_token=session-abc' },
+    })
+
+    // Whatever it answers (the stub upstream may not return a provider URL),
+    // it must be this app's bridge, not a blind forward of the same path.
+    assert.notEqual(response.status, 403, 'the CSRF guard must not answer this request')
+    // `upstreamCalls` records "<METHOD> <pathname>" strings.
+    assert.ok(
+      !upstreamCalls.some((call) => call.includes('/api/auth/social-redirect')),
+      'the path must never be forwarded to the auth worker verbatim',
+    )
   })
 })
 

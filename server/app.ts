@@ -5,7 +5,7 @@ import type { Services } from './services/index.ts'
 import { AppError } from './lib/errors.ts'
 import { withServices, csrfGuard, type AppEnv } from './http/middleware.ts'
 import { createAuthRoutes } from './http/auth-routes.ts'
-import { createAuthProxyRoutes, isPlatformAuthPath } from './http/auth-proxy.ts'
+import { createAuthProxyRoutes, createSocialRedirectRoutes, isPlatformAuthPath } from './http/auth-proxy.ts'
 import { createApiRoutes, toErrorResponse } from './http/api-routes.ts'
 import { registerActionRoutes } from './http/action-routes.ts'
 import type { ActionToolsPort } from './actions/types.ts'
@@ -110,6 +110,10 @@ export function createApp(options: CreateAppOptions): Hono<AppEnv> {
   // authenticates through its local adapter, and a request that falls through
   // here still gets the owned routes above.
   if (config.authMode === 'deepspace') {
+    // `/social-redirect` first: it is app-owned (the platform does not implement
+    // it), so it must be registered before the catch-all proxy that would
+    // otherwise forward it upstream and get a 404.
+    app.route('/api/auth', createSocialRedirectRoutes({ authWorkerUrl: authWorkerUrl, appOrigin: config.appOrigin }))
     app.route('/api/auth', createAuthProxyRoutes({ authWorkerUrl: authWorkerUrl }))
   }
 

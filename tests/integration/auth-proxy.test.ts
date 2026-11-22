@@ -136,19 +136,36 @@ describe('auth proxy: forwards the platform handshake', () => {
   it('returns OAuth redirects to the browser instead of following them', async () => {
     // A followed redirect would end the navigation inside the worker; the
     // browser has to perform it for the OAuth round trip to complete.
+    //
+    // NOTE: this used `/api/auth/social-redirect` as the example until v0.2.5.
+    // That path is app-owned — the platform does not implement it, which is why
+    // it 404'd in production — so it never reaches this proxy any more. The
+    // platform's real OAuth entry point is `/sign-in/social`, and the callback
+    // is a genuine browser redirect, so that is what this test exercises now.
     stubAuthWorker(
       () =>
         new Response(null, {
           status: 302,
-          headers: { location: 'https://github.com/login/oauth/authorize?client_id=x' },
+          headers: { location: 'https://accounts.google.com/o/oauth2/v2/auth?client_id=x' },
         }),
     )
     const app = appWithProxy(AUTH_URL)
 
-    const response = await app.request('/api/auth/social-redirect?provider=github', { method: 'GET' })
+    const response = await app.request('/api/auth/callback/google?code=abc&state=xyz', { method: 'GET' })
 
     assert.equal(response.status, 302)
-    assert.match(response.headers.get('location') ?? '', /github\.com\/login\/oauth\/authorize/)
+    assert.match(response.headers.get('location') ?? '', /accounts\.google\.com\/o\/oauth2\/v2\/auth/)
+  })
+
+  it('no longer proxies social-redirect, because the app owns that route', async () => {
+    // Regression guard for the production 404: forwarding this path made the
+    // auth worker answer 404 and dead-ended "Continue with Google".
+    stubAuthWorker(() => Response.json({ ok: true }))
+    const app = appWithProxy(AUTH_URL)
+
+    await app.request('/api/auth/social-redirect?provider=google', { method: 'GET' })
+
+    assert.equal(calls.length, 0, 'social-redirect must not be forwarded upstream')
   })
 })
 
