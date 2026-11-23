@@ -109,3 +109,21 @@ Exigem autorização ou credenciais, não implementação:
 5. **Deploy** e validação de `/api/health` em `runtime=worker, storage=records`.
 6. **Autorização para habilitar** `ENABLE_EXTERNAL_APIS` / `ENABLE_PAID_OPERATIONS` — sem ela,
    pesquisa e análise permanecem bloqueadas por desenho.
+
+---
+
+## 7. Adendo — observações posteriores em produção
+
+Após a redação deste relatório, a aplicação foi publicada e o responsável confirmou, em
+validação manual, o funcionamento dos fluxos de autenticação, pesquisa real via Exa, análise
+real via Gemini, persistência dos registros e atualizações em tempo real. Os detalhes
+observados estão em [production-validation.md](production-validation.md).
+
+Esse resultado posterior atualiza o estado operacional da aplicação, mas não altera
+retroativamente o escopo dos testes descritos nas seções anteriores.
+
+**Distinção importante:** persistência e atualização em tempo real foram observadas no fluxo
+manual de produção. Isso, isoladamente, não demonstra que duas requisições simultâneas disputando
+a mesma reserva sejam serializadas pelo Durable Object real. A garantia de concorrência só deve
+ser declarada como validada após um teste concorrente específico, reproduzível e documentado no
+ambiente de produção.

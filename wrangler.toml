@@ -81,8 +81,8 @@ NATIVE_AUTH_REDIRECT_URIS = ""
 APP_ORIGIN = "https://signalmess.app.space"
 
 # External API and paid operation safeguards
-ENABLE_EXTERNAL_APIS = "false"
-ENABLE_PAID_OPERATIONS = "false"
+ENABLE_EXTERNAL_APIS = "true"
+ENABLE_PAID_OPERATIONS = "true"
 
 # External provider configuration
 EXA_SEARCH_TYPE = "auto"
