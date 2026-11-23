@@ -1,5 +1,7 @@
+
 import { describe, it, beforeEach } from 'node:test'
 import assert from 'node:assert/strict'
+
 import {
   bearerFor,
   isTokenExempt,
@@ -8,18 +10,16 @@ import {
 } from '../../src/lib/bearer.ts'
 
 /**
- * Bearer token plumbing (DOM-free core).
+ * Bearer token plumbing tests.
  *
- * `src/lib/api.ts` attaches the result of `bearerFor()` to outgoing requests; the
- * decision logic lives here so it can be exercised without a DOM. The HTTP-level
- * behaviour is covered in `tests/unit/api-bearer.test.ts`.
+ * These tests verify:
  *
- * ## What these tests protect
- *
- *  - the exchange endpoint never consults the provider (no recursion);
- *  - a failed exchange is not retried per request (no loop);
- *  - concurrent requests do not stack exchanges;
- *  - the token is handed out only when one exists.
+ * - token exemption rules;
+ * - successful token retrieval;
+ * - failed exchange handling;
+ * - retry after explicit reset;
+ * - shared token exchange between concurrent requests;
+ * - provider replacement while an exchange is running.
  */
 
 beforeEach(() => {
@@ -27,7 +27,7 @@ beforeEach(() => {
 })
 
 describe('token exemption', () => {
-  it('exempts the exchange endpoint and credential lifecycle paths', () => {
+  it('exempts token and credential lifecycle endpoints', () => {
     for (const path of [
       '/api/auth/token',
       '/api/auth/login',
@@ -38,7 +38,7 @@ describe('token exemption', () => {
     }
   })
 
-  it('treats a query string on an exempt path as exempt', () => {
+  it('treats query strings on exempt paths as exempt', () => {
     assert.equal(isTokenExempt('/api/auth/token?x=1'), true)
   })
 
@@ -48,14 +48,16 @@ describe('token exemption', () => {
       '/api/investigations',
       '/api/investigations/1/export',
       '/api/history',
+      '/api/dashboard',
+      '/api/validations',
     ]) {
       assert.equal(isTokenExempt(path), false, path)
     }
   })
 
-  it('does not exempt a path that merely starts with an exempt name', () => {
-    // `/api/auth/tokenizer` is not the exchange endpoint.
+  it('does not exempt paths that merely start with an exempt name', () => {
     assert.equal(isTokenExempt('/api/auth/tokenizer'), false)
+    assert.equal(isTokenExempt('/api/auth/logout-history'), false)
   })
 })
 
@@ -64,23 +66,31 @@ describe('bearerFor', () => {
     assert.equal(await bearerFor('/api/investigations'), null)
   })
 
-  it('returns the token the provider yields', async () => {
+  it('returns the token provided by the SDK', async () => {
     setTokenProvider(async () => 'header.payload.signature')
-    assert.equal(await bearerFor('/api/investigations'), 'header.payload.signature')
+
+    assert.equal(
+      await bearerFor('/api/investigations'),
+      'header.payload.signature',
+    )
   })
 
-  it('does not consult the provider for an exempt path', async () => {
+  it('does not consult the provider for exempt paths', async () => {
     let calls = 0
+
     setTokenProvider(async () => {
       calls += 1
       return 'x.y.z'
     })
+
     assert.equal(await bearerFor('/api/auth/token'), null)
+    assert.equal(await bearerFor('/api/auth/logout'), null)
     assert.equal(calls, 0)
   })
 
-  it('treats a null token as a failed exchange and stops retrying', async () => {
+  it('treats a null token as a failed exchange', async () => {
     let calls = 0
+
     setTokenProvider(async () => {
       calls += 1
       return null
@@ -88,21 +98,23 @@ describe('bearerFor', () => {
 
     assert.equal(await bearerFor('/api/a'), null)
     assert.equal(await bearerFor('/api/b'), null)
-    assert.equal(calls, 1, 'a failed exchange must not be retried per request')
+    assert.equal(calls, 1)
   })
 
   it('treats a thrown provider as unavailable', async () => {
     setTokenProvider(async () => {
       throw new Error('sdk unavailable')
     })
+
     assert.equal(await bearerFor('/api/a'), null)
   })
 
   it('retries after an explicit reset', async () => {
     let calls = 0
+
     setTokenProvider(async () => {
       calls += 1
-      return calls === 1 ? null : 'x.y.z'
+      return calls === 1 ? null : 'fresh.jwt.signature'
     })
 
     assert.equal(await bearerFor('/api/a'), null)
@@ -110,37 +122,78 @@ describe('bearerFor', () => {
 
     resetTokenProviderState()
 
-    assert.equal(await bearerFor('/api/b'), 'x.y.z')
+    assert.equal(
+      await bearerFor('/api/b'),
+      'fresh.jwt.signature',
+    )
     assert.equal(calls, 2)
   })
 
-  it('never runs two exchanges concurrently', async () => {
+  it('shares one token exchange across concurrent requests', async () => {
+    let calls = 0
     let inFlight = 0
     let peak = 0
+
     setTokenProvider(async () => {
+      calls += 1
       inFlight += 1
       peak = Math.max(peak, inFlight)
-      await new Promise((r) => setTimeout(r, 15))
+
+      await new Promise((resolve) => setTimeout(resolve, 30))
+
       inFlight -= 1
-      return 'x.y.z'
+      return 'shared.jwt.signature'
     })
 
     const results = await Promise.all([
-      bearerFor('/api/a'),
-      bearerFor('/api/b'),
-      bearerFor('/api/c'),
+      bearerFor('/api/dashboard'),
+      bearerFor('/api/validations'),
+      bearerFor('/api/investigations'),
     ])
 
-    assert.equal(peak, 1, 'exchanges must not stack')
-    // The first resolves; the others saw `resolving` and degraded to null.
-    assert.equal(results.filter((r) => r === 'x.y.z').length, 1)
+    assert.equal(calls, 1, 'only one token exchange must happen')
+    assert.equal(peak, 1, 'token exchanges must not stack')
+
+    assert.deepEqual(results, [
+      'shared.jwt.signature',
+      'shared.jwt.signature',
+      'shared.jwt.signature',
+    ])
+  })
+
+  it('does not reuse a token from a replaced provider', async () => {
+    let finishOldProvider!: (value: string | null) => void
+
+    setTokenProvider(
+      () =>
+        new Promise<string | null>((resolve) => {
+          finishOldProvider = resolve
+        }),
+    )
+
+    const oldRequest = bearerFor('/api/dashboard')
+
+    setTokenProvider(async () => 'new.jwt.signature')
+
+    finishOldProvider('old.jwt.signature')
+
+    assert.equal(await oldRequest, null)
+    assert.equal(
+      await bearerFor('/api/validations'),
+      'new.jwt.signature',
+    )
   })
 
   it('a new provider clears the failed state', async () => {
     setTokenProvider(async () => null)
-    await bearerFor('/api/a')
 
-    setTokenProvider(async () => 'fresh.token.value')
-    assert.equal(await bearerFor('/api/b'), 'fresh.token.value')
+    assert.equal(await bearerFor('/api/a'), null)
+
+    setTokenProvider(async () => 'fresh.jwt.signature')
+
+    assert.equal(
+      await bearerFor('/api/b'),
+      'fresh.jwt.signature',
+    )
   })
 })
